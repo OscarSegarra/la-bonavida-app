@@ -8,6 +8,16 @@ export async function proxy(request: NextRequest) {
     },
   });
 
+  // No Supabase project wired up yet for this environment (e.g. prod,
+  // deliberately deferred — see DECISIONS.md). Pass requests through
+  // instead of crashing every request with a missing-config error.
+  if (
+    !process.env.NEXT_PUBLIC_SUPABASE_URL ||
+    !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  ) {
+    return response;
+  }
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

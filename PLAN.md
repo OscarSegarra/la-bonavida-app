@@ -9,8 +9,8 @@ before we start building features.
 - [x] Supabase client wiring (preprod)
 - [x] `households` / `household_members` schema + RLS
 - [x] CI (type-check, lint, test)
-- [ ] Branch protection on `main`/`develop`
-- [ ] Vercel project + environments
+- [x] Branch protection on `main`/`develop`
+- [x] Vercel project + environments
 - [ ] `la-bonavida-prod` Supabase project (deferred until launch-ready)
 
 ## Phase 1 — Auth & households

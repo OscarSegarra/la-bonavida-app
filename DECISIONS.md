@@ -238,3 +238,34 @@ before merge.
 This is the same gate most companies put in front of every merge — it
 turns "did I break something?" from a manual guess into an automated
 answer.
+
+---
+
+## 2026-09-06 — Repo visibility: public, to get free branch protection
+
+**Decision:** made `la-bonavida-app` public on GitHub.
+
+**Context:** GitHub's branch protection (blocking direct pushes, requiring
+CI to pass before merge) is a paid feature (GitHub Pro, ~$4/month) for
+private repositories, but free on public ones.
+
+**Alternatives considered:** (a) pay for GitHub Pro to keep the repo
+private — rejected for now, small but unnecessary recurring cost; (b) skip
+branch protection and rely on discipline — rejected, defeats the point of
+having CI at all (a failing check is meaningless if it can be merged
+anyway).
+
+**Why public is safe here:** no secrets are ever committed — API
+keys/tokens live in `.env.local` (gitignored) and, later, in Vercel's
+environment variable store, never in the repository. The `NEXT_PUBLIC_*`
+Supabase URL and anon key are *designed* to be public (they're sent to
+every browser that loads the app) — the database itself stays protected by
+Row Level Security regardless of who can read the source code. Verified by
+searching the full git history for key-shaped strings before flipping
+visibility.
+
+**What changed as a result:** both `main` and `develop` now have branch
+protection — no direct pushes, no force-pushes, no branch deletion, and the
+CI check (`Type-check, lint, and test`) must pass before a PR can merge.
+`develop` was also set as the repo's default branch, since that's where
+feature-branch PRs will normally target.

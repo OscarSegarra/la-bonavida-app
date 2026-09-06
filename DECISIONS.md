@@ -607,3 +607,40 @@ support doesn't require restructuring that isolation, there's nothing
 concrete to build ahead of time that would save work later.
 
 ---
+
+## 2026-09-06 — Fixed: open redirect + auth-code hijack in the login flow
+
+**Context:** caught by an automated security review of the Phase 1
+implementation commit, not planning — recorded here because it's a real
+vulnerability with a real fix, not just a style note.
+
+**What was wrong:** the magic-link sign-in action (`src/app/login/actions.ts`)
+built the email's `emailRedirectTo` URL from an `origin` value taken
+straight from a hidden form field. Since a Server Action is just a POST
+endpoint, nothing stops a direct POST with `origin` set to an attacker's
+domain — which would make Supabase send the real auth code to *their*
+callback URL instead of ours, a genuine account-takeover vector. Separately,
+both the login action and `/auth/callback` used a client-supplied `next`
+query param directly in a redirect target with no validation — an open
+redirect (`next=https://evil.com` or protocol-relative variants).
+
+**Fix:**
+- `origin` is never taken from client input anymore. A new server-only
+  `SITE_URL` env var (set per environment: `.env.local` for local dev,
+  Vercel env vars for preview/production) is the only source now.
+- A shared `safeRedirectPath()` helper (`src/lib/safe-redirect.ts`) only
+  accepts a `next` value that's a same-origin relative path (starts with
+  a single `/`, not `//` or `/\`, no `://`) — anything else falls back to
+  a known-safe default. Used in both the login action and the callback
+  route, the only two places a `next` value ever becomes a redirect target.
+
+**Why this matters beyond the fix itself:** this is exactly the class of
+mistake "explain before doing" is meant to catch at the design stage, but
+this one slipped through because it was implementation detail (how to pass
+the browser's origin through a form) rather than a named architectural
+decision — worth remembering that request-derived values feeding into
+redirects or outbound URLs need the same scrutiny as anything else
+user-controlled, even when they don't look like "user input" at first
+glance.
+
+---

@@ -1,15 +1,10 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState } from "react";
 import { sendMagicLink } from "./actions";
 
 export function LoginForm({ next }: { next?: string }) {
   const [state, formAction, pending] = useActionState(sendMagicLink, {});
-  const originRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (originRef.current) originRef.current.value = window.location.origin;
-  }, []);
 
   if (state.sent) {
     return (
@@ -21,7 +16,6 @@ export function LoginForm({ next }: { next?: string }) {
 
   return (
     <form action={formAction} className="flex w-full max-w-sm flex-col gap-3">
-      <input type="hidden" name="origin" defaultValue="" ref={originRef} />
       {next && <input type="hidden" name="next" value={next} />}
       <label className="flex flex-col gap-1 text-sm">
         <span className="font-medium text-black dark:text-zinc-50">Email</span>

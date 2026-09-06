@@ -95,6 +95,33 @@ pass before merge:
   (e.g. `meal-plans`, `shopping-lists`).
 - Migrations: `supabase/migrations/<YYYYMMDDHHMMSS>_<snake_case_name>.sql`.
 
+## UI scope for now
+
+All UI is built **responsively** from the start (Tailwind breakpoints —
+`sm:`/`md:`/`lg:`) so layouts reflow across different window sizes; this is
+standard practice, not extra work deferred to later. What *is* deferred to
+Phase 6 (see `PLAN.md`) is phone-specific UX polish (touch-target sizing,
+mobile navigation patterns) and installability as a PWA (home-screen icon,
+manifest, offline access) — see `DECISIONS.md`. This all stays a
+presentation-layer concern only — `domain/` and `data/` are already
+framework-agnostic and must never encode any assumption about screen size
+or viewport; only a module's `ui/` folder should need to change as phone
+support is filled in later.
+
+## Data fetching
+
+Pages are **Server Components** by default — fetch data server-side during
+render (`async function Page()` calling Supabase directly), not as a
+Client Component fetching via `useEffect` after the page has already
+loaded (that's a real extra round trip: download JS, run it, then start
+fetching, for data that was already known and cheap to fetch server-side).
+Mutations go through **Server Actions** (`'use server'` functions), called
+from small Client Component buttons/forms — only the actually-interactive
+pieces of a page need `'use client'`, not whole pages. This is a default
+favoring fewer round trips, not an absolute rule — a specific future piece
+that genuinely needs live client-side updates can still be a Client
+Component. See `DECISIONS.md` ("Phase 1 efficiency pass") for the reasoning.
+
 ## Testing expectations
 
 New business logic (anything in a module's `domain/`) should get a unit
@@ -118,3 +145,13 @@ Proton is Oscar's personal/admin inbox — it will never send app email.
   intentionally, not to be touched without Oscar's explicit go-ahead.
 - Extracting `shopping-lists` into a real separately-deployed service is a
   planned future learning exercise, not part of the MVP.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

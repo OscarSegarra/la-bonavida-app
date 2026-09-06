@@ -269,3 +269,341 @@ protection — no direct pushes, no force-pushes, no branch deletion, and the
 CI check (`Type-check, lint, and test`) must pass before a PR can merge.
 `develop` was also set as the repo's default branch, since that's where
 feature-branch PRs will normally target.
+
+---
+
+## 2026-09-06 — Phase 1 planning: auth method, household roles, invites, switching, onboarding
+
+**Context:** planning session before building Phase 1 (Auth & households).
+
+**Decision: magic-link-only sign-in.** No password, for anyone. Supabase
+emails a one-time login link; clicking it starts a session that persists via
+cookies (already refreshed on every request by `src/proxy.ts`) — so this
+only affects how someone *starts* a session, not routine app use, which
+stays logged in across opens/closes like any normal app.
+
+**Alternatives considered:** password (own reset flow to build/secure,
+reusable/leakable secret); both (most flexible, most surface area). Rejected
+for now — nothing here is unrecoverable: Supabase supports adding password
+sign-in to the same accounts later with no schema change and no rework of
+anything built in this phase.
+
+**Why:** the only real cost of magic-link is occasional re-login friction
+(new device, cleared cookies, long inactivity) — not everyday use, since
+sessions persist. That's an acceptable trade for owning zero password
+storage/reset surface.
+
+---
+
+**Decision: household roles stay exactly `owner` / `member` (no `admin`
+tier), and a household may have more than one owner.** An owner can rename
+or delete the household, invite members as either role, promote/demote any
+member's role, and remove any member — including another owner. There is
+deliberately no tiebreaker: an owner removing or demoting another owner is
+a normal, allowed action.
+
+**New invariant this creates:** a household must never reach zero owners.
+An owner may only remove *or demote* themselves if at least one other owner
+remains; otherwise they must promote another member to owner first, or
+delete the household instead. Both actions (remove and demote) are guarded
+by the same rule, enforced in the database (RLS/constraint), not just
+disabled as a button in the UI — consistent with this project's rule that
+security lives in Postgres, not application discipline.
+
+**Why no `admin` tier:** the originally proposed "admin" role would have had
+identical permissions to "owner" once co-owners are allowed and there's no
+tiebreaker between them — a role with no distinguishing power isn't a real
+role. This also means the existing Phase 0 schema (`role in ('owner',
+'member')`) needs no migration for roles themselves.
+
+---
+
+**Decision: invites are single-use, expiring links — not email-targeted.**
+An owner generates an invite link for a chosen role (`owner` or `member`);
+the app hands back a URL containing an unguessable random token
+(`/invites/<token>`) that the owner sends however they want, outside the
+app (text, chat, in person). It is **not** tied to any specific email
+address. Whoever holds the link, once authenticated, sees "you've been
+invited to **[household]** as **[role]**" and must explicitly Accept or
+Decline — accepting inserts the membership row and consumes the invite in
+one atomic step (a single Postgres function, not two separate calls that
+could leave a half-applied state if the second one failed).
+
+**Alternatives considered, and why both were rejected:**
+- **Pending-invites keyed by email**, checked at login: silent and
+  invisible until the invitee happens to log in on their own — the
+  original design had no way to actually notify anyone new, since sending
+  a custom email needs Resend + a domain (still deferred — see the "Email"
+  decision above) and no other outbound-email path exists yet.
+- **Supabase Admin `inviteUserByEmail`**: creates a real `auth.users` row
+  immediately, so every invite that's never accepted (declined, ignored,
+  mistyped) leaves a permanent ghost account behind. Worse, its behavior
+  *depends on* whether the email is already registered (silently succeeds
+  for a new email, errors "already exists" for a registered one) — any code
+  path that branches on that difference leaks whether an arbitrary email
+  has an account on the platform. It also needs the service-role key
+  server-side, a new class of secret to guard for no real benefit once the
+  leak/ghost-account problems rule it out anyway.
+
+**Why the link model instead:** it needs no outbound email at all (the
+owner distributes it themselves, by any channel), never creates an account
+on our behalf (a real account only ever gets created by the person
+themselves, via ordinary magic-link sign-up), and never branches on account
+existence (visiting the link behaves identically either way — log in if
+needed, then see the same accept/decline prompt) — so there's nothing left
+to leak.
+
+**Invite-link details:**
+- **Single-use, enforced by deletion.** There is no status column
+  (`accepted`/`declined`/etc.) — accepting a link deletes its row in the
+  same atomic step that inserts the membership row, which is what actually
+  makes it single-use (once gone, the token can't be used again). One link
+  = one invite for one person; inviting several people means generating
+  several links. Rejected a reusable household-wide link — it can't be
+  revoked for just one person, and everyone who used it would be stuck at
+  one fixed role.
+- **Declining does nothing to the database.** It's a pure UI action —
+  dismiss the prompt — with no row change at all. A declined link remains
+  technically valid (re-visitable, re-acceptable) until it expires or an
+  owner revokes it. Simpler than tracking accept/decline as separate
+  states, and nothing in this app needs that history.
+- **Expires after 7 days** from creation, whether it was ever opened,
+  declined, or ignored. A link is a bearer credential (anyone holding it
+  can join); an old one sitting in a stale chat thread shouldn't work
+  indefinitely.
+- **A scheduled cleanup job (`pg_cron`) deletes expired rows**, rather than
+  just checking expiry at read-time and leaving stale rows to accumulate
+  forever. Built now, not deferred — decided this way specifically to avoid
+  leaving a known, resolvable gap for later.
+- **Revocable by any owner** in the household, not just the one who
+  generated it — consistent with owners being peers with no tiebreakers
+  elsewhere in this design. If the generating owner later leaves, the link
+  they created stays valid (it belongs to the household, not to them) —
+  `invited_by` is kept only as an audit trail, not a validity condition.
+- **Two-tier rate limit, both enforced in the database (a trigger
+  rejecting the insert past either limit):** at most **5 new links per day
+  per household**, and separately at most **10 new links per day per
+  person** across every household they own. The per-household cap reflects
+  that a household realistically has a handful of members, not dozens; the
+  per-person cap covers someone who owns multiple households without
+  multiplying their household cap by however many they own.
+- **Visible only to owners** in household settings (the list of pending,
+  unused links) — members don't need this to use the app.
+
+**Lookup/accept mechanism:** a non-member visiting `/invites/<token>` has
+no RLS-granted access to `household_invites` at all (that table stays
+owner-only, per above) — so both the lookup ("what household/role does
+this token grant?") and the accept action need to bypass normal row
+visibility for that one narrow case, the same way `private.household_role`
+already does for the recursion problem (see the RLS design decision
+above). Two `SECURITY DEFINER` functions, not a broader table policy:
+- `private.get_invite(_token text)` — returns just the household name,
+  role, and expiry for an exact, unexpired token match; nothing otherwise.
+  Can't be used to enumerate invites, since it only ever answers for one
+  token the caller already supplies.
+- `accept_household_invite(_token text)` — validates the token the same
+  way, inserts the caller's `household_members` row at the invite's role,
+  and deletes the invite row, all in one transaction.
+
+A broad `using (true)` policy on `household_invites` was considered and
+rejected — it would let any authenticated user list every pending invite
+token for every household (not just filter to the one they're asking
+about), since RLS restricts *which rows exist* for a query, not *what a
+client is allowed to ask*.
+
+**Zero-owner guard is a general invariant, not a self-action check.** The
+trigger blocks removing/demoting *any* row where doing so would leave a
+household with zero `owner` rows — it doesn't matter whether the actor is
+removing themselves or another owner. (In practice these coincide once
+there's exactly one owner left, since only owners can act at all and that
+owner would have to be the one acting — but the guard is implemented as the
+general rule, not the narrower coincidence, so it stays correct if that
+structural assumption ever changes.) It's also **race-safe**: the trigger
+locks the household's owner rows (`select ... for update`) before counting,
+so two simultaneous removals/demotions of two different owners can't each
+read "at least one other remains" and both proceed, leaving zero owners.
+A naive count-then-allow check would have this exact race for a two-owner
+household — the realistic case, since multi-owner is the point.
+
+---
+
+## 2026-09-06 — `public.profiles` table: required alias, not auto-generated
+
+**Decision:** add `public.profiles(id uuid primary key references
+auth.users(id) on delete cascade, alias text not null, created_at
+timestamptz not null default now())`. No trigger auto-creates it — a user
+inserts their own row (`with check (id = auth.uid())`) via a mandatory
+"what should we call you?" step, required immediately after first
+authentication, before anything else (including before an invite's
+accept/decline screen if they arrived via a link). The row's existence
+*is* the completion signal: any future login with a row already present
+skips straight past this step. The alias is editable anytime afterward
+(update policy: yourself only, alias only) — required once, never locked.
+Not unique — purely a display label; two members can share the same alias.
+
+**Why this exists at all:** `auth.users` (where email lives) is never
+exposed to the client — that's Supabase's own boundary, not a choice made
+here. Without a public-facing identity table, "view members" on the
+household settings page, and "invited by X" on the pending-invites list,
+would have nothing to display but opaque UUIDs. This was caught in review
+before being built, not after.
+
+**Alternatives considered:**
+- **Auto-default from email** (e.g. the part before `@`), editable later,
+  populated by a trigger on `auth.users` insert: less onboarding friction,
+  but rejected — an alias is exactly the kind of thing other modules
+  (recipes' `created_by`, later) will want to already exist and be
+  intentional, not a byproduct of an email address.
+- **A `SECURITY DEFINER` function reading `auth.users` directly** instead
+  of a synced table: avoids a table to maintain, but doesn't give users
+  something they chose, and doesn't compose as cleanly with recipes/other
+  modules wanting to reference a person later.
+
+**Why no trigger:** once the value has to come from the user (not
+computed), there's nothing for a trigger to auto-generate — the "set your
+alias" action *is* the insert. Simpler than maintaining trigger-created
+placeholder rows.
+
+**RLS:** select — yourself, or anyone you share a household with (a plain
+subquery against `household_members`, no new `SECURITY DEFINER` needed,
+since Phase 0's existing "any member sees the roster" policy already
+covers the subquery's own access). Insert — yourself only, once. Update —
+yourself only, alias only. No delete policy for clients (cascades when the
+`auth.users` row is deleted).
+
+**`household_members.user_id` is repointed to reference `public.profiles(id)`
+instead of `auth.users(id)` directly** (a new migration on top of Phase 0's
+schema; still transitively tied to `auth.users` via `profiles`' own foreign
+key). This makes "you must have a profile before you can join a household"
+a real constraint Postgres enforces, not just something the UI happens to
+route through first — consistent with this project's pattern of putting
+integrity in the database rather than trusting app discipline, at the cost
+of one line in a migration.
+
+**Interaction with account deletion (a future feature, not built yet):**
+`household_members` cascades from `auth.users`, so deleting a user's
+account cascades into deleting their `household_members` row(s). If that
+row is a household's last `owner`, the zero-owner guard trigger rejects the
+delete — which means the whole account-deletion transaction fails, not
+just that one row. This is **intentional, decided now rather than
+discovered later**: a sole owner must transfer ownership (promote someone
+else) or delete the household itself before their account can be deleted.
+Flagging this now so a future account-deletion feature is built around it
+deliberately, rather than someone finding a confusing Postgres error the
+first time it happens.
+
+**Testing:** this phase's real business logic mostly lives in Postgres
+(the zero-owner guard, both rate-limit triggers, the `household_invites`/
+`profiles` RLS boundaries, `accept_household_invite`), not in TypeScript
+`domain/` code — so this project's normal "unit test what's in `domain/`"
+convention (see `CLAUDE.md`) doesn't reach it; `vitest` never touches a
+Postgres trigger. **`pgTAP`** (a Postgres extension for SQL-level tests,
+confirmed available — installable but not yet enabled — on the preprod
+project) covers this instead, added to the same CI quality bar as
+type-check/lint/unit tests. Without it, a later migration could silently
+weaken the zero-owner guard or an RLS policy and nothing would catch it
+before it reached preprod.
+
+---
+
+## 2026-09-06 — Phase 1 efficiency pass
+
+**Context:** this app's real data volume will always be tiny — one
+household at a time, single-digit members, a handful of invites, ever. Most
+classic database-efficiency concerns (expensive scans, index-starved
+lookups over large tables) don't apply here and aren't worth designing
+around; the RLS design's `SECURITY DEFINER` function calls and the
+`profiles` visibility subquery were checked against this reality and are
+fine as designed, no change needed. The efficiency questions that actually
+matter at this scale are request/round-trip count (what Vercel/Supabase
+meter) and a couple of indexes that cost nothing to add now.
+
+**Decision: two additional indexes on `household_invites`.**
+- A **unique index on `token`** — not just for lookup speed but for
+  correctness: it makes a token collision structurally impossible rather
+  than merely astronomically unlikely.
+- **`(household_id, created_at)` and `(invited_by, created_at)`** — these
+  serve the two rate-limit triggers' count queries (the hottest path in
+  this feature, since they run on every invite creation), and double as
+  the exact index the owner-only pending-invites list needs ("unused
+  invites for this household, newest first"). One pair of indexes, two
+  uses each.
+
+**Decision: the `pg_cron` cleanup job runs once daily.** The 7-day expiry
+window doesn't need anything finer-grained; this was previously agreed to
+exist but never given a schedule.
+
+**Decision: data-layer guidance to avoid N+1 queries.** The household
+roster (member + role + alias) and the pending-invites list (invite +
+inviter's alias) must each be fetched as **one joined query** in
+`households/data/`, never "fetch the list, then loop fetching each
+profile separately." Noted now so it's built right the first time, not
+discovered as a fix later.
+
+**Decision: Server Components + Server Actions as the standing
+data-fetching convention** (not just for Phase 1 — logged in `CLAUDE.md`
+as an ongoing rule). Pages fetch data server-side, during render
+(`async function Page()` calling Supabase directly), rather than as
+Client Components that fetch via `useEffect` after the page has already
+loaded in the browser — the latter is a real extra round trip (download
+JS → run it → then start fetching) for pages that mostly just show data.
+Mutations (accepting an invite, promoting a member, generating a link) go
+through **Server Actions** (`'use server'` functions called from small
+Client Component buttons/forms), so only the actually-interactive pieces
+of a page ship JS to the browser and need `'use client'` at all — not
+whole pages.
+
+**Alternatives considered:** client-side fetching via `useEffect` for
+these pages — rejected as the default, since it adds a round trip and a
+loading state for data that's already known and cheap to fetch
+server-side; there's no live-update requirement in Phase 1 that would
+justify it. Nothing rules out a Client Component for a specific future
+piece that genuinely needs it (e.g., a live-updating shopping list in a
+later phase) — this is a default, not an absolute rule.
+
+**Decision: household switching is URL-based** (`/households/[id]/...`),
+with no stored "current household" preference. Switching is just navigating
+to a different household's URL. No extra state to keep in sync, and it's
+already impossible to see another household's data through its URL if
+you're not a member — Postgres RLS refuses the row regardless of what the
+app renders, the same guarantee Phase 0 established. Rejected a "remembered
+last household" cookie/column as unnecessary sync state for someone who'll
+realistically belong to 1-2 households.
+
+**Decision: onboarding is just "create a household" — no email-matched
+invite scanning.** Since invites are link-based, not email-targeted, there
+is nothing to discover at a generic login; the link itself is the
+notification, delivered by whatever channel the owner chose. A user with no
+household yet lands on a "create a household" screen. Someone arriving via
+an invite link (`/invites/<token>`) gets its own dedicated accept/decline
+step instead, reached by that link specifically (after signing in first, if
+they weren't already). Accepting is always a deliberate, explicit action —
+never automatic — because joining a household means seeing its data, and
+that requires the invitee's active consent, not just an owner's say-so.
+
+---
+
+## 2026-09-06 — Responsive web now, PWA installability deferred to Phase 6
+
+**Decision:** all UI is built responsively (Tailwind breakpoints) from the
+first component, so it reflows across any window size. Phone-specific UX
+(touch targets, mobile nav) and installability as a PWA (manifest, icons,
+home-screen install, optional offline access) are deferred to Phase 6, not
+built now.
+
+**Why deferring is free:** responsive layout is standard Tailwind usage, not
+an extra step — there's no "desktop-only" shortcut being taken that would
+need undoing later. PWA installability is additive metadata (a manifest
+file + icons, optionally a service worker) that can be layered onto an
+existing Next.js app at any point without touching `domain/`, `data/`, or
+most of `ui/` — so there's no "wrapper" or special architecture to design in
+now on the chance it's needed; nothing about Phase 1 (or any phase before 6)
+changes as a result of eventually wanting a PWA.
+
+**Alternatives considered:** designing a phone-specific "wrapper" or
+adaptive-layout system now, in anticipation of phone use. Rejected — since
+`ui/` is already isolated per module (see `ARCHITECTURE.md`), and PWA
+support doesn't require restructuring that isolation, there's nothing
+concrete to build ahead of time that would save work later.
+
+---

@@ -42,3 +42,8 @@ next-env.d.ts
 
 .vercel
 .env*
+
+# graphify (generated knowledge graph; local .claude/settings.json has a
+# machine-specific absolute path to the graphify binary, not portable)
+/graphify-out/
+/.claude/

@@ -132,6 +132,25 @@ as `data/` and UI, not the domain-logic bucket, since testing them
 meaningfully means integration-testing against a real or mocked Supabase
 client rather than a plain unit test. Revisit as the app grows past MVP.
 
+## Function documentation
+
+Every **substantive** function — real internal logic: business rules,
+data access, orchestration, Server Actions, SQL functions/triggers — is
+documented at its own definition, not in a separate file that can drift
+out of sync with the code it describes:
+- **TypeScript:** a JSDoc block directly above the function — a one-line
+  overview, `@param` per input, `@returns` for the output.
+- **SQL functions:** a comment block above `create function` in the
+  migration, plus a `comment on function ...` statement, so the
+  documentation is real, queryable Postgres metadata (visible via `\df+`
+  or in Supabase Studio), not just a comment in a file.
+
+**Exempt:** trivial one-liners (simple type guards, tiny formatting
+helpers) and presentational UI components with no real internal logic —
+their signature/props and JSX already say what goes in and what comes
+out. See `DECISIONS.md` for why this applies retroactively to everything
+already built, not just new work.
+
 ## Email
 
 No real transactional email yet. Supabase's built-in test email handles

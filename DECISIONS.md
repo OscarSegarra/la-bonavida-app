@@ -733,3 +733,30 @@ been committed yet. Re-applied and committed immediately once noticed.
 Lesson: don't leave a real fix sitting uncommitted across a review pass.
 
 ---
+
+## 2026-09-07 — Function-level documentation, retrofitted to everything built so far
+
+**Decision:** every substantive function (real internal logic — business
+rules, data access, orchestration, Server Actions, SQL functions/triggers)
+gets a documented input, output, and one-line overview at its own
+definition — JSDoc for TypeScript, a comment block + `comment on
+function` for SQL. Applied retroactively to all of Phase 0 and Phase 1,
+not just new work going forward.
+
+**Why:** re-examining each function's actual behavior closely enough to
+accurately describe its inputs/outputs is itself a bug-finding pass —
+the user specifically wanted the retrofit for this reason, not just as
+documentation hygiene.
+
+**Alternatives considered:** a separate documentation file describing
+functions elsewhere in the codebase — rejected, since it drifts out of
+sync with the code the moment either changes without the other, and this
+project already has DECISIONS.md/PLAN.md for the "why," not the "what
+does this function take and return." Going-forward-only — rejected; the
+bug-finding value only applies to code that's actually re-examined.
+
+**Scope line:** trivial one-liners (simple type guards, tiny formatting
+helpers) and presentational UI components with no real internal logic
+are exempt — their signature/props and JSX already document input/output.
+
+---

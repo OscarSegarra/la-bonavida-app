@@ -15,6 +15,19 @@ before we start building features.
 
 ## Phase 1 — Auth & households
 
+**Status: built**, on branch `feature/phase-1-auth-households` (migrations
+applied to preprod, typecheck/lint/unit tests/production build all pass,
+21/21 pgTAP assertions verified against preprod). Two known gaps at
+merge time, both flagged rather than silently assumed fine:
+- The new `db-tests` CI job (pgTAP via `supabase start`) could not be run
+  in this environment (no Docker/Supabase CLI available) — written per
+  documented Supabase CLI conventions, but unverified end-to-end. Watch
+  its first real run.
+- Full interactive testing (magic-link email click-through, a real
+  multi-account invite acceptance) needs manual verification — no email
+  inbox or browser access in this environment; only route-level behavior
+  was smoke-tested (redirects, rendering) via curl against the dev server.
+
 Requirements decided in planning (see `DECISIONS.md` for the full
 reasoning) — this replaces the original bullet list:
 

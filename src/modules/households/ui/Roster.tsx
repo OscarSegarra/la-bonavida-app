@@ -23,12 +23,15 @@ export function Roster({
   myUserId: string;
   isOwner: boolean;
 }) {
+  const ownerCount = members.filter((m) => m.role === "owner").length;
+
   return (
     <ul className="flex flex-col gap-2">
       {members.map((member) => {
         const isSelf = member.userId === myUserId;
         const otherRole: MemberRole =
           member.role === "owner" ? "member" : "owner";
+        const isSoleOwner = member.role === "owner" && ownerCount === 1;
 
         return (
           <li
@@ -43,7 +46,12 @@ export function Roster({
               </span>
             </span>
 
-            {isOwner && (
+            {isOwner && isSoleOwner && (
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                Sole owner — promote someone else first
+              </span>
+            )}
+            {isOwner && !isSoleOwner && (
               <div className="flex gap-2">
                 <form
                   action={submitSetMemberRole.bind(

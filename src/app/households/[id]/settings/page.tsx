@@ -45,6 +45,8 @@ export default async function HouseholdSettingsPage({
     getRoster(supabase, householdId),
     isOwner ? listPendingInvites(supabase, householdId) : Promise.resolve([]),
   ]);
+  const isSoleOwner =
+    isOwner && roster.filter((m) => m.role === "owner").length === 1;
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-8 px-6 py-16">
@@ -111,13 +113,20 @@ export default async function HouseholdSettingsPage({
           Danger zone
         </h2>
         <div className="flex gap-2">
-          <form action={submitLeaveHousehold.bind(null, householdId)}>
-            <ConfirmButton
-              label="Leave household"
-              confirmMessage="Leave this household? You'll need a new invite to rejoin."
-              className="rounded-md border border-black/10 px-3 py-1.5 text-sm dark:border-white/10"
-            />
-          </form>
+          {isSoleOwner ? (
+            <p className="text-xs text-zinc-500 dark:text-zinc-400">
+              You&apos;re the sole owner — promote another member to owner
+              before you can leave.
+            </p>
+          ) : (
+            <form action={submitLeaveHousehold.bind(null, householdId)}>
+              <ConfirmButton
+                label="Leave household"
+                confirmMessage="Leave this household? You'll need a new invite to rejoin."
+                className="rounded-md border border-black/10 px-3 py-1.5 text-sm dark:border-white/10"
+              />
+            </form>
+          )}
           {isOwner && (
             <form action={submitDeleteHousehold.bind(null, householdId)}>
               <ConfirmButton

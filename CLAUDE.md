@@ -124,9 +124,13 @@ Component. See `DECISIONS.md` ("Phase 1 efficiency pass") for the reasoning.
 
 ## Testing expectations
 
-New business logic (anything in a module's `domain/`) should get a unit
-test. Database access (`data/`) and UI are tested more sparingly for now —
-revisit as the app grows past MVP.
+New business logic (pure functions in a module's `domain/`, e.g.
+`domain/validation.ts`) should get a unit test. A module's Server Actions
+(`domain/actions.ts`) are thin orchestration over `data/` calls plus
+redirects — they fall in the same "tested more sparingly for now" bucket
+as `data/` and UI, not the domain-logic bucket, since testing them
+meaningfully means integration-testing against a real or mocked Supabase
+client rather than a plain unit test. Revisit as the app grows past MVP.
 
 ## Email
 

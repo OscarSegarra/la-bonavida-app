@@ -644,3 +644,92 @@ user-controlled, even when they don't look like "user input" at first
 glance.
 
 ---
+
+## 2026-09-07 — Fixes from a full code review of the Phase 1 branch
+
+**Context:** ran `/code-review` against the whole `develop..feature/
+phase-1-auth-households` diff after the branch was otherwise complete.
+Ten findings came back; each is addressed (or explicitly deferred) below.
+
+**Fixed, real bugs:**
+- **`submitAlias` had the same open-redirect gap** as the login action/
+  callback route (see the entry above) — it built its own `next` value
+  from form data without going through `safeRedirectPath()`. Missed the
+  first time because it's a third, easy-to-overlook call site for the
+  same pattern. Fixed identically.
+- **`accept_household_invite` had a TOCTOU race**: two people accepting
+  the same token near-simultaneously could both pass the lookup and
+  "not already a member" checks before either `DELETE` ran, both
+  inserting — granting one single-use link to two people. Fixed with
+  `for update` on the initial lookup, so a concurrent second call blocks
+  until the first commits, then correctly sees the token as already gone.
+- **The invite rate-limit trigger had the identical race** — two
+  concurrent inserts could each read a pre-insert count and both pass the
+  cap check. Fixed with a `pg_advisory_xact_lock` per household and per
+  person, serializing concurrent invite creation for the same key (a
+  legitimate second invite just waits its turn, it isn't rejected). Also
+  merged what were two sequential `COUNT` scans into one query, per a
+  separate efficiency finding on the same function.
+- **`household_invites.invited_by` was `on delete cascade`**, silently
+  contradicting the documented invariant that a link "belongs to the
+  household, not the inviter." Leaving a household never triggered this
+  (leaving only touches `household_members`), but deleting the inviter's
+  *profile* (not a Phase 1 feature yet, but the eventual account-deletion
+  case already noted above) would have deleted their still-valid pending
+  invites too. Changed to `on delete set null` (column now nullable) —
+  the audit trail can be lost, the invite itself never is.
+- **`profiles.alias`/`households.name` length limits were UI-only** —
+  `domain/validation.ts` claimed "the database enforces these too," but
+  only non-emptiness had a check constraint; the length caps (60/100
+  chars) didn't, so calling the Supabase API directly (normal usage for
+  this app's own client) could bypass them. Added the missing check
+  constraints rather than weakening the comment to match the gap.
+- **No error boundary existed anywhere in the app**, so the zero-owner
+  guard firing from a plain settings-page button (or any other uncaught
+  Server Action error) fell through to Next.js's generic crash page.
+  Added `src/app/error.tsx`. Also proactively hid the doomed action in
+  the common case: the Roster and settings-page "Leave household" control
+  now check whether the current user is the household's sole owner and
+  hide/disable accordingly, so the error boundary is a safety net, not
+  the normal path.
+
+**Simplified, not a bug:** the six actions in `domain/actions.ts` that
+call a `data/` function and translate a thrown error into `{ error }`
+repeated that `try`/`catch` shape verbatim. Extracted a small `attempt()`
+helper. (Deliberately *not* applied to `submitSetMemberRole`/
+`submitRemoveMember`/`submitLeaveHousehold` — those have no inline error
+state to fill in, and the new `error.tsx` boundary already covers them.)
+
+**Acknowledged, not changed:**
+- **The `household_members.user_id` → `profiles(id)` FK repoint
+  (`20260906130000_profiles.sql`) validates immediately on the existing
+  table**, rather than using `not valid` + a separate `validate
+  constraint` step. That's the right caution for a migration hitting a
+  table that might already hold rows violating the new constraint — ours
+  didn't (preprod was empty at that point, and prod will be created fresh
+  and replay every migration from the same starting point), so this
+  specific migration is fine as committed. Noted here as a **going-forward
+  practice**: a future FK/constraint addition to a table that might
+  already hold non-conforming production data should use `not valid` +
+  `validate constraint` (or backfill first), not this migration's
+  immediately-validating form. Not editing the already-applied migration
+  itself — that's against this project's own convention (never edit an
+  applied migration; add a new one instead).
+- **`domain/actions.ts` (Server Actions) has no test coverage**, unlike
+  `domain/validation.ts`. Clarified in `CLAUDE.md` rather than rushed:
+  Server Actions are thin orchestration over `data/` plus redirects —
+  testing them meaningfully needs a real-or-mocked Supabase client
+  (integration-test shaped), not a plain unit test, so they now
+  explicitly fall in the same "tested more sparingly for now" bucket as
+  `data/` and UI, rather than silently under-delivering on the `domain/`
+  testing rule as originally worded.
+
+**Process note:** during this review, a background finder subagent made
+an unrequested, uncommitted edit to `actions.ts` (applying the
+`safeRedirectPath` fix itself instead of just reporting it) — this was
+caught and reverted before the review's findings were finalized, but it
+also silently undid a fix already made earlier in the session that hadn't
+been committed yet. Re-applied and committed immediately once noticed.
+Lesson: don't leave a real fix sitting uncommitted across a review pass.
+
+---

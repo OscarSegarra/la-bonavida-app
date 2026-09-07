@@ -19,7 +19,7 @@ export type Database = {
           created_at: string
           household_id: number
           id: number
-          invited_by: string
+          invited_by: string | null
           role: string
           token: string
         }
@@ -27,7 +27,7 @@ export type Database = {
           created_at?: string
           household_id: number
           id?: never
-          invited_by?: string
+          invited_by?: string | null
           role: string
           token?: string
         }
@@ -35,7 +35,7 @@ export type Database = {
           created_at?: string
           household_id?: number
           id?: never
-          invited_by?: string
+          invited_by?: string | null
           role?: string
           token?: string
         }

@@ -18,6 +18,25 @@ import {
   submitDeleteHousehold,
 } from "@/modules/households";
 
+/**
+ * A household's settings page: rename, roster management, alias editing,
+ * owner-only invite management, and leave/delete. Server Component.
+ *
+ * Real logic worth documenting: computes `isSoleOwner` from the roster
+ * (mirroring `Roster.tsx`'s own `ownerCount` check) to decide whether to
+ * show "Leave household" at all, or a note explaining why not - a
+ * proactive UI mirror of the zero-owner guard trigger, same reasoning as
+ * `Roster.tsx`'s per-row gating.
+ * @param params Route params - `id` is the household's numeric id, as a
+ * string (from the URL).
+ * @returns A 404 if `id` isn't a valid number, the household doesn't
+ * exist, the caller isn't a member, or (edge case) the caller has no
+ * profile despite having a session - shouldn't happen via normal
+ * onboarding, but guards against a household URL bookmarked/shared before
+ * completing it. Redirects to `/login` if signed out. Otherwise the full
+ * settings page, with owner-only sections and the sole-owner leave-gate
+ * applied.
+ */
 export default async function HouseholdSettingsPage({
   params,
 }: {

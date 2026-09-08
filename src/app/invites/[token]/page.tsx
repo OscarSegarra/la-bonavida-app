@@ -8,6 +8,18 @@ import {
   submitAlias,
 } from "@/modules/households";
 
+/**
+ * The `/invites/<token>` landing page reached from an invite link. Server
+ * Component: gates through sign-in and the required alias step (both
+ * preserving `token` as the `next` destination, so the flow returns here
+ * rather than dropping onto generic onboarding), then looks up and shows
+ * what the token grants.
+ * @param params Route params - `token` is the invite token from the URL.
+ * @returns Redirects to `/login` (with `next` set to this same page) if
+ * signed out; the alias form (same `next`) if no profile exists yet; an
+ * "invalid or expired" message if the token doesn't resolve to anything;
+ * otherwise the accept/decline card.
+ */
 export default async function InvitePage({
   params,
 }: {

@@ -11,7 +11,25 @@ type Member = {
   alias: string;
 };
 
-/** Server Component - roster mutations are plain bound Server Actions, no client JS needed. */
+/**
+ * Renders a household's member roster with owner-only promote/demote/
+ * remove controls. Server Component - mutations are plain bound Server
+ * Actions (`.bind(null, ...)` as a form's `action`), no client JS needed.
+ *
+ * Real logic worth documenting: computes `ownerCount` from `members` and,
+ * for whichever row is the sole remaining owner, hides that row's
+ * Demote/Remove controls and shows an explanatory note instead - a
+ * proactive UI mirror of the zero-owner guard trigger, so hitting that
+ * guard (an uncaught error, caught only by `src/app/error.tsx`) is the
+ * exception, not the normal path.
+ * @param householdId The household being managed (passed through to the
+ * bound Server Actions, used only to revalidate the settings page).
+ * @param members The roster to render (from `data/members.ts`'s `getRoster`).
+ * @param myUserId The signed-in user's id, to label their own row "(you)".
+ * @param isOwner Whether the signed-in user is an owner - only owners see
+ * the promote/demote/remove controls at all.
+ * @returns A `<ul>` of member rows.
+ */
 export function Roster({
   householdId,
   members,

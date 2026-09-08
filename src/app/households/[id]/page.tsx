@@ -3,6 +3,18 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getHousehold, getMyRole, getRoster } from "@/modules/households";
 
+/**
+ * A household's home page - name and read-only roster, with a link to
+ * settings. Server Component.
+ * @param params Route params - `id` is the household's numeric id, as a
+ * string (from the URL).
+ * @returns A 404 (`notFound()`) if `id` isn't a valid number, the
+ * household doesn't exist, or the caller isn't a member (RLS returns no
+ * role for `getMyRole`, which reads the same as "doesn't exist" here -
+ * deliberately, so a non-member can't distinguish "no such household"
+ * from "not your household" by response shape). Redirects to `/login` if
+ * signed out. Otherwise the household's name and member list.
+ */
 export default async function HouseholdPage({
   params,
 }: {

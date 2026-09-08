@@ -8,6 +8,15 @@ import {
   submitAlias,
 } from "@/modules/households";
 
+/**
+ * Post-login landing page. Server Component: walks the required sequence
+ * for a new session - signed in? has a profile/alias? belongs to a
+ * household yet? - rendering whichever step is still incomplete, or
+ * redirecting straight past this page once everything's in place.
+ * @returns Redirects to `/login` if signed out. Otherwise: the one-time
+ * alias form if no profile exists yet; a redirect to the user's first
+ * household if they already have one; or the "create a household" form.
+ */
 export default async function OnboardingPage() {
   const supabase = await createClient();
   const {

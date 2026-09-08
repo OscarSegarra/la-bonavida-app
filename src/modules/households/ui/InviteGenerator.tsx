@@ -4,6 +4,22 @@ import { useState, useTransition } from "react";
 import { submitCreateInviteLink } from "../domain/actions";
 import type { MemberRole } from "../domain/validation";
 
+/**
+ * Owner-only control (household settings page) for generating an invite
+ * link. Client Component - needs local state for the chosen role and the
+ * generated link, and calls the Server Action directly (not as a form
+ * action) so it can display the returned token as a copyable URL rather
+ * than navigating away.
+ *
+ * Real logic worth documenting: `generate()` calls `submitCreateInviteLink`
+ * inside a transition, then either shows its `{ error }` (e.g. rate limit
+ * hit) or builds `${origin}/invites/${token}` from the returned token -
+ * the token itself never gets a redirect, only ever displayed as a link
+ * the owner copies and sends elsewhere.
+ * @param householdId The household to generate an invite link for.
+ * @returns A role picker, a generate button, and (after a successful
+ * generation) the resulting invite URL or an error message.
+ */
 export function InviteGenerator({ householdId }: { householdId: number }) {
   const [role, setRole] = useState<MemberRole>("member");
   const [link, setLink] = useState<string | null>(null);

@@ -2,6 +2,15 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { LoginForm } from "./LoginForm";
 
+/**
+ * Sign-in page. Server Component: redirects away immediately if already
+ * signed in, otherwise renders the magic-link form, threading through any
+ * `next` query param (e.g. from being redirected here off an invite link).
+ * @param searchParams Next.js route props - `next` is the page/path to
+ * return to after signing in, read from the URL.
+ * @returns Redirects to `/` if already signed in; otherwise the sign-in
+ * form.
+ */
 export default async function LoginPage({
   searchParams,
 }: {

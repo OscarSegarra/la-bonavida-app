@@ -137,6 +137,7 @@ export type Database = {
     }
     Functions: {
       accept_household_invite: { Args: { _token: string }; Returns: number }
+      create_household: { Args: { _name: string }; Returns: number }
       get_household_invite: {
         Args: { _token: string }
         Returns: {

@@ -760,3 +760,60 @@ helpers) and presentational UI components with no real internal logic
 are exempt — their signature/props and JSX already document input/output.
 
 ---
+
+## 2026-09-08 — Fixed: `createHousehold` wasn't just non-atomic, it was broken
+
+**Context:** documenting `createHousehold` surfaced what looked like a
+minor atomicity gap (two separate inserts, not one transaction). Fixing
+it properly turned up something much bigger: the household insert used
+`insert ... returning` (via `.insert({name}).select("id, name")`), and
+that never actually worked for a real user in the first place.
+
+**What was actually wrong:** `households` has `force row level security`,
+which means `insert ... returning` must also satisfy the table's SELECT
+policy for the row being returned — Postgres applies SELECT policies to
+`RETURNING` as if it were a separate query. `households_select` requires
+`private.household_role(id) is not null`, i.e. an existing membership —
+but a household that was *just* inserted has zero members yet, so nobody
+(not even its about-to-be owner) satisfies that check. The result: the
+whole `INSERT` was rejected with an RLS violation, for every real
+authenticated caller, every time. Confirmed empirically against preprod
+before writing any fix — this was not a theoretical concern.
+
+**Fix:** `create_household(_name text)`, a `SECURITY DEFINER` SQL
+function that does both inserts (household, then owner membership) in one
+transaction. `SECURITY DEFINER` isn't just for atomicity here — it's what
+lets the function's own internal `RETURNING` bypass the chicken-and-egg
+SELECT-policy problem, the same way `accept_household_invite` and
+`get_household_invite` already bypass RLS for their own narrow reasons.
+Safe for the same reason those are: no dynamic SQL, and the owner's
+`user_id` always comes from `auth.uid()` internally, never a
+client-supplied value.
+
+**A second, smaller mistake caught along the way:** the first attempt
+revoked `EXECUTE` from `anon` specifically (matching the pattern used for
+the invite functions), but the security advisor still flagged `anon` as
+able to call it. Unlike tables (where Supabase grants `anon`/
+`authenticated` directly), a newly created *function* additionally gets
+`EXECUTE` granted to the `PUBLIC` pseudo-role by plain Postgres default —
+`anon` inherits through `PUBLIC` regardless of any revoke aimed at `anon`
+alone. Confirmed via `information_schema.role_routine_grants`: this
+function had a `PUBLIC` grant row and no separate `anon` row at all, so
+revoking from `anon` was a silent no-op. Revoking from `public` (the
+role) fixed it. Worth remembering as the inverse of the earlier
+anon-vs-PUBLIC lesson from Phase 1's first invite migration.
+
+**Also caught, and worth remembering as a testing-methodology note:** an
+early manual verification attempt put a `create or replace function`
+statement in the *same* `execute_sql` call as a later `rollback`, which
+undid the redefinition along with the test data — the tool runs each
+call as one transaction regardless of an explicit inner `begin`, so a
+schema change meant to persist must never share a call with a `rollback`
+used for test cleanup.
+
+**Added 4 pgTAP assertions** (happy path creates both rows correctly; a
+user with no profile fails on the FK as expected *and* leaves no orphaned
+household behind) — re-verified the full suite (25/25) against preprod
+before committing.
+
+---

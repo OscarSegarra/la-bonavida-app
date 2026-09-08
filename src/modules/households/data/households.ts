@@ -46,17 +46,14 @@ export async function getHousehold(supabase: Client, householdId: number) {
 }
 
 /**
- * Creates a household and makes the caller its first owner.
- *
- * NOTE (found while documenting this function): the household insert and
- * the owner-membership insert are two separate statements, not one atomic
- * transaction/RPC. If the second insert fails after the first succeeds
- * (network blip, unexpected RLS/constraint failure), the household is
- * left orphaned - it exists with zero members and nobody can ever manage
- * or delete it through the app (every household action requires being a
- * member). Low-probability today under normal use, but worth the same
- * atomic-RPC treatment `accept_household_invite` already got, if this
- * comes up again.
+ * Creates a household and makes the caller its first owner, atomically -
+ * wraps the `create_household` SQL function (see its DB comment for why
+ * it needs SECURITY DEFINER: an `insert ... returning` against a
+ * force-RLS table also has to satisfy that table's SELECT policy for the
+ * returned row, and a brand-new household has no members yet to satisfy
+ * it - the original two-separate-inserts version here hit exactly this
+ * and would have failed for every real user, not just risked an orphaned
+ * household on partial failure as first suspected).
  * @param supabase A Supabase client scoped to the current request/session.
  * @param name The household's name (not validated here - see
  * `domain/validation.ts`'s `validateHouseholdName`, and the DB check
@@ -65,24 +62,11 @@ export async function getHousehold(supabase: Client, householdId: number) {
  * session, or if either insert is rejected.
  */
 export async function createHousehold(supabase: Client, name: string) {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in.");
-
-  const { data: household, error: householdError } = await supabase
-    .from("households")
-    .insert({ name })
-    .select("id, name")
-    .single();
-  if (householdError) throw householdError;
-
-  const { error: memberError } = await supabase
-    .from("household_members")
-    .insert({ household_id: household.id, user_id: user.id, role: "owner" });
-  if (memberError) throw memberError;
-
-  return household;
+  const { data: id, error } = await supabase.rpc("create_household", {
+    _name: name,
+  });
+  if (error) throw error;
+  return { id, name };
 }
 
 /**

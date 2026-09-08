@@ -13,28 +13,77 @@
 create extension if not exists pgtap;
 
 begin;
-select plan(21);
+select plan(25);
 
--- Fixtures: two owners, one plain member, and one stranger, on a household
--- created directly (bypassing the app - this is fixture setup, not
--- something under test).
+-- Fixtures: two owners, one plain member, one stranger, and one user with
+-- no profile at all (for create_household's atomicity test), on a
+-- household created directly (bypassing the app - this is fixture setup,
+-- not something under test).
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-0000000000a1', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'owner-a@example.test', '', now(), '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-0000000000a2', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'owner-b@example.test', '', now(), '{}', '{}', now(), now()),
   ('00000000-0000-0000-0000-0000000000a3', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'member-c@example.test', '', now(), '{}', '{}', now(), now()),
-  ('00000000-0000-0000-0000-0000000000a4', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'stranger-d@example.test', '', now(), '{}', '{}', now(), now());
+  ('00000000-0000-0000-0000-0000000000a4', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'stranger-d@example.test', '', now(), '{}', '{}', now(), now()),
+  ('00000000-0000-0000-0000-0000000000a5', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'no-profile-e@example.test', '', now(), '{}', '{}', now(), now());
 
 insert into public.profiles (id, alias) values
   ('00000000-0000-0000-0000-0000000000a1', 'Owner A'),
   ('00000000-0000-0000-0000-0000000000a2', 'Owner B'),
   ('00000000-0000-0000-0000-0000000000a3', 'Member C'),
   ('00000000-0000-0000-0000-0000000000a4', 'Stranger D');
+-- deliberately no profiles row for a5
 
 insert into public.households (id, name) overriding system value values (900001, 'Test Household');
 insert into public.household_members (household_id, user_id, role) values
   (900001, '00000000-0000-0000-0000-0000000000a1', 'owner'),
   (900001, '00000000-0000-0000-0000-0000000000a3', 'member');
+
+-- === create_household: atomic creation ===
+-- Added after finding (while documenting the function) that the original
+-- two-separate-inserts TypeScript implementation would fail RLS for every
+-- real user (insert...returning against households needs its own SELECT
+-- policy satisfied, which a brand-new zero-member household never has
+-- yet) - fixed with a SECURITY DEFINER SQL function. These assertions
+-- guard both the happy path and the atomicity the fix was originally
+-- meant to add.
+
+select set_config('request.jwt.claims', json_build_object('sub','00000000-0000-0000-0000-0000000000a1','role','authenticated')::text, true);
+set local role authenticated;
+
+select lives_ok(
+  $$ select create_household('pgTAP Created House') $$,
+  'create_household succeeds for a user with a profile'
+);
+
+select is(
+  (select count(*) from households h
+    join household_members hm on hm.household_id = h.id
+    where h.name = 'pgTAP Created House' and hm.role = 'owner'
+      and hm.user_id = '00000000-0000-0000-0000-0000000000a1')::int,
+  1,
+  'create_household made the caller the sole owner of the new household'
+);
+
+reset role;
+
+select set_config('request.jwt.claims', json_build_object('sub','00000000-0000-0000-0000-0000000000a5','role','authenticated')::text, true);
+set local role authenticated;
+
+select throws_ok(
+  $$ select create_household('Should Not Persist') $$,
+  '23503',
+  null,
+  'create_household fails for a user with no profile (FK on household_members)'
+);
+
+reset role;
+
+select is(
+  (select count(*) from households where name = 'Should Not Persist')::int,
+  0,
+  'a failed create_household does not leave an orphaned household behind (atomic)'
+);
 
 -- === Zero-owner guard ===
 

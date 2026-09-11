@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "seed:ingredients": "node --env-file-if-exists=.env.local scripts/seed-ingredients.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.6",

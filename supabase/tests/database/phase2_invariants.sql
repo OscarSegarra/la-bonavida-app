@@ -2,9 +2,9 @@
 --
 -- This file grows with the phase. It currently covers slice 1 (the global
 -- reference vocabularies and the household region setting) and slice 2
--- (the ingredient catalog and its five companion tables). Slice 4 will add
--- the seeded-data assertions and the upsert_ingredient() write path, both
--- of which need data and a function that do not exist yet.
+-- (the ingredient catalog and its five companion tables) and slice 4 (the
+-- upsert_ingredient write path). The seeded-data assertions land with the
+-- dataset itself, which CI does not apply.
 --
 -- Run with the Supabase CLI (`supabase test db`) or pg_prove against any
 -- Postgres with this project's migrations applied. Self-contained and
@@ -23,7 +23,7 @@
 create extension if not exists pgtap;
 
 begin;
-select plan(66);
+select plan(84);
 
 -- Fixtures: an owner, a plain member, and a stranger, plus one household.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -540,6 +540,181 @@ select is(
   + (select count(*) from public.ingredient_seasonality  where ingredient_id not in (select id from public.ingredients)),
   0::bigint,
   'deleting an ingredient cascades to all five companion tables'
+);
+
+-- =====================================================================
+-- Slice 4: upsert_ingredient - the catalog's only write path.
+--
+-- Assertions 21-25 in the plan check the *state* seeded data ends up in;
+-- these check the *transition* that produces it, which is where Phase 1's
+-- orphaned-household bug actually lived.
+-- =====================================================================
+
+-- Nobody but a service role may call it. A grant here would be a write
+-- path into the admin-curated catalog, defeating this phase's RLS model.
+select ok(
+  not has_function_privilege('authenticated', 'public.upsert_ingredient(jsonb)', 'execute'),
+  'authenticated cannot execute upsert_ingredient'
+);
+select ok(
+  not has_function_privilege('anon', 'public.upsert_ingredient(jsonb)', 'execute'),
+  'anon cannot execute upsert_ingredient'
+);
+
+-- It must NOT be SECURITY DEFINER: unlike create_household it is never
+-- called by an end user, so elevation would only widen the blast radius
+-- of an accidental grant.
+select is(
+  (select prosecdef from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'upsert_ingredient'),
+  false,
+  'upsert_ingredient is SECURITY INVOKER, not DEFINER'
+);
+
+-- Happy path: one call writes the parent row and every companion set.
+select lives_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_full","food_group":"lacteos","nutrition_basis":"per_100ml",
+    "density_g_per_ml":1.03,
+    "names":{"es":"ZZ Completa","en":"ZZ Full"},
+    "nutrients":{"energy_kcal":63,"protein":3.2},
+    "dietary_tags":["milk","vegetarian"],
+    "units":{"allowed":["ml","l"],"default":"ml"},
+    "seasonality":{"es":[11,12,1]}
+  }'::jsonb) $q$,
+  'upsert_ingredient writes a complete ingredient in one call'
+);
+
+select is(
+  (select (select count(*) from public.ingredient_translations t where t.ingredient_id = i.id)
+        + (select count(*) from public.ingredient_nutrients n where n.ingredient_id = i.id)
+        + (select count(*) from public.ingredient_dietary_tags d where d.ingredient_id = i.id)
+        + (select count(*) from public.ingredient_allowed_units u where u.ingredient_id = i.id)
+        + (select count(*) from public.ingredient_seasonality s where s.ingredient_id = i.id)
+   from public.ingredients i where i.code = 'zz_up_full'),
+  11::bigint,
+  'every companion set landed (2 names + 2 nutrients + 2 tags + 2 units + 3 months)'
+);
+
+select is(
+  (select count(*) from public.ingredient_allowed_units u
+     join public.ingredients i on i.id = u.ingredient_id
+    where i.code = 'zz_up_full' and u.is_default),
+  1::bigint,
+  'exactly one allowed unit is marked default'
+);
+
+-- Idempotency: the same code again updates in place rather than duplicating,
+-- and companion sets are replaced wholesale so removals in the dataset
+-- propagate.
+select lives_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_full","food_group":"lacteos","nutrition_basis":"per_100ml",
+    "names":{"es":"ZZ Completa"},
+    "nutrients":{"energy_kcal":63},
+    "dietary_tags":["milk"],
+    "units":{"allowed":["ml"],"default":"ml"},
+    "seasonality":{}
+  }'::jsonb) $q$,
+  're-running upsert_ingredient for an existing code succeeds'
+);
+
+select is(
+  (select count(*) from public.ingredients where code = 'zz_up_full'),
+  1::bigint,
+  're-running upsert_ingredient does not create a duplicate'
+);
+
+select is(
+  (select count(*) from public.ingredient_seasonality s
+     join public.ingredients i on i.id = s.ingredient_id
+    where i.code = 'zz_up_full'),
+  0::bigint,
+  'companion rows dropped from the payload are removed, not merged'
+);
+
+-- Unresolvable codes are named rather than silently skipped. A join would
+-- quietly drop them, leaving an ingredient missing data nobody noticed.
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_bad","food_group":"not_a_group","nutrition_basis":"per_100g",
+    "names":{"es":"X"},"nutrients":{},"dietary_tags":[],
+    "units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  'P0001', null, 'an unknown food group is rejected by name'
+);
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_bad","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"es":"X"},"nutrients":{"not_a_nutrient":1},"dietary_tags":[],
+    "units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  'P0001', null, 'an unknown nutrient code is rejected rather than dropped'
+);
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_bad","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"es":"X"},"nutrients":{},"dietary_tags":["not_a_tag"],
+    "units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  'P0001', null, 'an unknown dietary tag is rejected rather than dropped'
+);
+
+-- "The default unit must be one of the allowed units" is a cross-column
+-- rule the schema cannot express, so the function enforces it.
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_bad","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"es":"X"},"nutrients":{},"dietary_tags":[],
+    "units":{"allowed":["g"],"default":"kg"}
+  }'::jsonb) $q$,
+  'P0001', null, 'a default unit outside the allowed list is rejected'
+);
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_bad","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"es":"X"},"nutrients":{},"dietary_tags":[],
+    "units":{"allowed":[],"default":"g"}
+  }'::jsonb) $q$,
+  'P0001', null, 'an ingredient with no allowed units is rejected'
+);
+
+-- Nothing survives a rejected call.
+select is(
+  (select count(*) from public.ingredients where code = 'zz_up_bad'),
+  0::bigint,
+  'a failed upsert_ingredient leaves no orphaned ingredients row behind'
+);
+
+-- The re-seed path is the dangerous one, and the case Phase 1 never had:
+-- companion rows are deleted before being re-inserted, so without the
+-- function's transaction boundary a mid-way failure would destroy a
+-- previously-good name rather than merely failing to add one.
+select lives_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_reseed","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"es":"ZZ Buena"},"nutrients":{"energy_kcal":50},
+    "dietary_tags":["vegetarian"],"units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  'seed an ingredient that a later re-seed will fail on'
+);
+
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_reseed","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"es":"ZZ Reemplazada"},"nutrients":{"not_a_nutrient":1},
+    "dietary_tags":["vegetarian"],"units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  'P0001', null, 'a re-seed carrying bad data is rejected'
+);
+
+select is(
+  (select t.name from public.ingredient_translations t
+     join public.ingredients i on i.id = t.ingredient_id
+    where i.code = 'zz_up_reseed' and t.locale = 'es'),
+  'ZZ Buena',
+  'a failed re-seed leaves the previous data intact rather than destroying it'
 );
 
 select * from finish();

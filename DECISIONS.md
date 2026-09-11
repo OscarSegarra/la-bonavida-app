@@ -817,3 +817,731 @@ household behind) — re-verified the full suite (25/25) against preprod
 before committing.
 
 ---
+
+## 2026-09-11 — Phase 2+ reorder: Ingredients before Recipes, new Fridge
+phase added after Shopping Lists
+
+**Context:** starting Phase 2 planning. The original `PLAN.md` had Recipes
+as Phase 2 and Ingredients as Phase 3, but a recipe's "attach ingredients +
+quantities" bullet has nothing to attach to until the ingredient catalog
+exists. Separately, a fridge/pantry inventory feature (not in the original
+plan at all) was identified as needed, referencing ingredients and
+interacting with shopping-list generation.
+
+**Decision:**
+1. Swap Phase 2 and 3: **Ingredients** now precedes **Recipes**. The real
+   dependency chain is `households → ingredients → recipes → meal plans →
+   shopping lists`; each phase's data model references the one before it,
+   and shopping-list aggregation ("2 recipes need onions → one line item")
+   only works if recipes reference the same ingredient row rather than a
+   free-text name.
+2. Add a new **Phase 6 — Fridge/pantry**, placed after Shopping Lists
+   (Phase 5). It references the ingredient catalog and upgrades
+   shopping-list generation to subtract on-hand stock ("need 2 onions,
+   have 1, buy 1").
+
+**Alternatives considered:**
+- *Merge Ingredients+Recipes into one phase* — resolves the dependency,
+  but doubles the PR/review size for a one-directional dependency that
+  reordering already fixes for free.
+- *Free-text ingredients in Recipes now, migrate to a catalog later* —
+  ships Recipes "first," but breaks shopping-list aggregation and forces
+  a real data migration later instead of building in the right order now.
+- *Fridge phase placed right after Ingredients (Phase 3), before Recipes*
+  — architecturally valid (fridge only depends on Ingredients, not
+  Recipes/Meal Plans), but delays the core recipe → meal-plan loop the
+  app is fundamentally about, for a feature whose main value (fridge-aware
+  shopping lists) isn't usable until Shopping Lists exists anyway.
+- *Fridge phase placed before Shopping Lists* — would let Shopping Lists
+  ship fridge-aware from day one, but the user chose to ship the full
+  simple planning loop (recipes → meal plans → basic shopping lists) end
+  to end first, then layer Fridge on as an explicit enhancement pass over
+  shopping-list generation. Accepted: one extra rework pass on shopping-
+  list generation, in exchange for a working core loop sooner.
+
+**Why:** matches how Phase 0/1 already built referenced entities before
+the entities that reference them (e.g. `profiles` before
+`household_invites`), and keeps each phase small and independently
+reviewable rather than growing a phase to route around a dependency that
+reordering resolves for free.
+
+---
+
+## 2026-09-11 — Ingredient catalog: global, not household-scoped
+
+**Context:** Phase 2 planning. Every other table so far is scoped to
+`household_id` and RLS-protected — a strict, enforced invariant (see
+"Data & security" in `CLAUDE.md`). The question was whether ingredients
+should follow that same pattern, or be shared reference data.
+
+**Decision:** the ingredient catalog is **global** — one table, shared
+across all households, not scoped to `household_id`. This is a deliberate
+exception to the household-scoping rule, not an oversight; `CLAUDE.md`
+has been updated to say so explicitly.
+
+**Alternatives considered:**
+- *Household-scoped* (this session's initial recommendation) — matches
+  the existing invariant exactly, zero new access-control design needed.
+  Rejected by the user in favor of avoiding duplicate typing across
+  households ("onion" is the same concept regardless of who's cooking) —
+  the app is expected to eventually serve many unrelated households
+  (public, monetized), where that duplication and search fragmentation
+  would compound.
+- *Hybrid: global curated list + household custom additions* — most
+  flexible, but doubles the Phase 2 data model (two ingredient sources to
+  merge in recipe search) for no demonstrated need yet. Deferred as
+  speculative.
+
+**Write-access design** (the real cost of going global — a global table
+needs an answer to "who can write to shared data everyone reads"):
+- **Insert:** any authenticated user; a case-insensitive unique constraint
+  on name blocks exact duplicates (near-duplicates like "onion" vs
+  "yellow onion" are an accepted MVP gap, not solved now).
+- **Update/delete:** only by the original creator (`created_by`), and
+  only while the row is unreferenced by any recipe or fridge row —
+  self-correct-your-own-typo, but no household can edit or delete another
+  household's entry, or one already relied on elsewhere. This was
+  revised mid-design from an initial "no edit/delete at all" — see the
+  growth-trajectory note below for why.
+- **Moderation** (flagging/removing bad public entries) is explicitly out
+  of scope for beta.
+
+**Why the write-access design isn't simpler:** the user set an explicit
+project-wide assumption in this session — the app starts in beta with a
+small number of trusted households, but is expected to eventually go
+public and be monetized. "Any authenticated user can insert, nobody can
+ever edit or delete" is a reasonable shortcut for a handful of trusted
+people, but at public scale it's an abuse vector with no recourse: junk
+or offensive entries would be visible to every household, forever, once
+strangers can sign up. The "self-correct if unused" rule costs a few
+extra lines now and avoids a re-architecture later — the general
+principle to apply going forward for any decision that opens a shared
+resource to user input. Full moderation tooling is still deferred (no
+demonstrated need at beta scale) and tracked in `PLAN.md`'s
+pre-public-launch checklist.
+
+**Superseded minutes later, same session — see the next entry:** the
+user proposed removing user writes entirely instead of mitigating them,
+which turned out to be the better answer.
+
+---
+
+## 2026-09-11 — Ingredient catalog write-access: admin-curated, not
+user-writable at all (supersedes previous entry's write-access design)
+
+**Context:** immediately after deciding the catalog would be global with
+an open-insert / self-correct-if-unused write policy, the user asked why
+allow user writes at all, given the ingredient space — while large — is
+genuinely finite, and an admin could maintain it directly instead.
+
+**Decision:** the catalog is **read-only for regular users**. No insert,
+update, or delete policy exists for authenticated users at all — under
+Postgres RLS, the *absence* of a policy already means default-deny, so
+this is less code than the previous design, not more. New ingredients are
+added by the project owner directly via Supabase Studio (which uses the
+service role and bypasses RLS) — no in-app admin role, flag, or UI is
+introduced for this; that machinery isn't justified while the "admin" is
+also the person with direct database access.
+
+**Alternatives considered:** the open-insert / self-correct-if-unused
+design from the previous entry — rejected because it still carried a
+residual abuse/duplicate surface (near-duplicate entries like "onion" vs
+"yellow onion" were an accepted gap, not solved) that admin-curation
+removes entirely rather than mitigates, for less implementation cost.
+
+**Why:** ranks better than the previous design on this project's own
+priority order (security, then simplicity) — no user-write path means no
+abuse vector to design around at all, and the RLS policy is simpler (read
+policy only) rather than needing insert/update/delete logic. The
+trade-off is a new bottleneck — households can't add their own missing
+ingredients — accepted for now because the project owner *is* the only
+real user during beta; tracked in `PLAN.md`'s pre-public-launch checklist
+as "needs an ingredient request/suggestion flow" once that stops being
+true.
+
+**New requirement this creates:** the catalog needs a real seed list
+before beta use, not an empty table — an admin-curated catalog that
+starts empty blocks the very first recipe anyone tries to build. Seeding
+approach (hand-curated vs. importing an open dataset) is a Phase 2
+implementation detail, not decided yet.
+
+---
+
+## 2026-09-11 — Phase 2 reference data: nutrition, food groups, units —
+all normalized reference-table + value-table pairs
+
+**Context:** Phase 2 planning continued past the catalog's own
+write-access design into what data each ingredient actually carries:
+full nutrition values, a food-group classification, and a unit system
+recipes/shopping-lists/fridge can do quantity math against.
+
+**Decision — nutrition:** store the full EU-standard nutrient set
+(Regulation 1169/2011 Annex XIII: 7 mandatory macros, 5 voluntary
+macros, ~13 vitamins, ~14 minerals — around 40 possible fields)
+**normalized**: a seeded `nutrients` reference table (code, name, unit,
+category) plus an `ingredient_nutrients` value table (ingredient_id,
+nutrient_id, value_per_100g) holding only the values actually known per
+ingredient, rather than one `ingredient_nutrition` row with ~40 mostly
+-null columns.
+
+**Alternatives considered (nutrition):** a wide table with one column
+per nutrient — simpler to read a single ingredient's full label (no
+join), but the user's stated access pattern is specifically "sum this
+across a day's meals eaten," which the normalized shape handles better:
+`group by nutrient_id, sum(value * quantity_factor)` computes a full
+daily breakdown as one server-side aggregate, versus either 40 separate
+`sum(...)` expressions in one wide-table query (rewritten every time a
+nutrient is added) or summing 40 columns across rows in application
+code. Checked the actual performance concern directly: a join/`= any()`
+batch query is still one database round trip regardless of table shape
+— the real N+1 problem is looping per item in application code, which
+neither design does here. Postgres also stores `NULL` columns as ~1 bit
+in a per-row null bitmap, not a full-width empty value, so "mostly-null
+wide table" isn't the storage/scan penalty it intuitively sounds like;
+the deciding factor was the aggregation workload fit, not storage. A
+covering index (`ingredient_id` including `nutrient_id, value_per_100g`)
+keeps the normalized version index-only-scan fast. This also matches how
+real food-composition databases (USDA FoodData Central, the Spanish
+BEDCA) model the same genuinely-sparse data.
+
+**Decision — food groups:** each ingredient gets exactly one required
+`food_group_id`, from a 13-group taxonomy taken directly from AESAN's
+"Recomendaciones Dietéticas Saludables y Sostenibles" (Dec 2022, read in
+full during this session): Hortalizas, Frutas, Patatas y otros
+tubérculos, Cereales, Legumbres, Frutos secos, Pescado y marisco,
+Huevos, Leche y lácteos, Carne, Aceite de oliva, Agua, and a catch-all
+Alimentos y bebidas a limitar for the document's "reduce/avoid" items
+(processed snacks, added salt, sugary drinks, saturated fats), which the
+source doesn't give individual serving guidance the way the recommended
+groups get. Chose this finer 13-group breakdown over the document's own
+coarser "at a glance" 6-group summary (which bundles legumes/nuts/fish/
+eggs/dairy/meat into one "Proteínas" bucket) because the finer groups
+match the level the actual serving-frequency recommendations operate at
+— useful if a future feature ever checks a meal plan against them. Each
+group's recommendation text is captured as a note on the row now (cheap
+while already reading the source; not consumed by anything yet).
+
+**Decision — units:** a `units` reference table (code, `dimension` —
+mass/volume/count, `to_base_factor` relative to one base unit per
+dimension) instead of a full pairwise conversion table — converting
+between two same-dimension units is arithmetic on their factors, no
+`unit_conversions` table needed. `ingredient_allowed_units` (many-to
+-many) restricts which units make sense per ingredient (e.g. eggs by
+count only), with `default_unit` as the preselected one. Cross
+-dimension conversion (volume → mass, e.g. cups of flour to grams)
+needs a per-ingredient density value and is explicitly out of scope —
+tracked for whenever it's actually needed, not designed speculatively
+now. Phase 3 (Recipes) will enforce that a recipe's ingredient lines can
+only use units the referenced ingredient allows, and can only reference
+ingredients that exist in the catalog — noted here so it isn't
+forgotten when that phase is built.
+
+**Why all three share one pattern:** nutrition, food groups (via their
+FK), and units all follow the same "reference table + join/value table,
+not fixed columns" shape used for the ingredient catalog's write-access
+design — consistent architecture across Phase 2, and, for nutrition and
+units specifically, the same "adding a new one later is a data insert,
+not a migration" property that mattered for the ingredient catalog's own
+design.
+
+---
+
+## 2026-09-11 — Allergens & dietary restrictions: unified tag system,
+built in Phase 2 (not deferred)
+
+**Context:** allergens (real EU-regulated food safety data) and dietary
+restrictions (vegetarian, vegan, and more later) were initially discussed
+as separate, and initially proposed as deferred to a later phase like
+substitutes/subtypes.
+
+**Decision:** build a minimal version **now**, in Phase 2, and — at the
+user's suggestion — model allergens and dietary restrictions as **one**
+system rather than two: a `dietary_tags` reference table (`category`:
+`allergen` or `diet`) seeded with the EU's 14 officially regulated
+allergens (Reg. 1169/2011 Annex II: gluten cereals, crustaceans, eggs,
+fish, peanuts, soybeans, milk, tree nuts, celery, mustard, sesame,
+sulphites, lupin, molluscs) plus diet labels (vegetarian, vegan to
+start), and one `ingredient_dietary_tags` many-to-many join table for
+both. Every tag means the same thing structurally — "this ingredient
+carries this tag" — whether it reads as "contains X" (allergens) or
+"compatible with X" (diet); that distinction lives in each tag's own
+name/description, not in the table structure. Tagged by the admin in
+the same curation pass as nutrition/food groups — no new access-control
+design, since ingredients are already admin-curated (see the global
+-catalog entry above).
+
+**Alternatives considered:**
+- *Defer both to a later phase*, matching the substitutes/subtypes
+  decision — rejected specifically for allergens/diet because, unlike
+  substitutes/subtypes, this data isn't purely additive: retrofitting it
+  later means a full re-tagging pass over every ingredient already in
+  the catalog, instead of tagging once during the curation work already
+  happening now. Also closer to a real safety concern (actual allergies)
+  than a convenience feature, which this project's priority order
+  (security first) weighs in favor of building now.
+- *Two hardcoded booleans* (`is_vegetarian`, `is_vegan`) plus a separate
+  `allergens`/`ingredient_allergens` pair — rejected once the user
+  pointed out it doesn't scale: every new diet type (halal, keto,
+  low-FODMAP, ...) would need a schema migration to add a column. The
+  unified tag table makes that a data insert instead, and reuses one
+  mechanism instead of two.
+
+**Known gap, not solved now:** tags are applied positively with no
+automatic inference — tagging an ingredient "vegan" doesn't
+automatically also tag it "vegetarian" (a true subset relationship in
+reality). The admin tags both explicitly for now; building inference
+logic is a later correctness improvement, not a blocker.
+
+---
+
+## 2026-09-11 — Multi-language content: translation companion tables
+(system-wide pattern, not just Phase 2)
+
+**Context:** the user wants the app fully multi-language (Spanish,
+Catalan, English to start, more later) — not just ingredient names, but
+recipes, shopping lists, and every future module's user-facing content.
+Decided now, early, specifically to avoid retrofitting translated
+content onto tables that already exist in several modules by the time
+it's addressed.
+
+**Decision:** two separate mechanisms for two separate problems.
+1. **App chrome** (button labels, navigation, static UI text) uses
+   `next-intl` — built for the Server-Component-first App Router setup
+   this project already uses (checked current setup docs via Context7
+   before recommending). Supported locales are a small code-level config
+   (`defineRouting`), not a database concern, since adding a UI language
+   always requires someone to actually translate the app's text.
+2. **User-facing content** (ingredient names first; recipe titles/
+   instructions and other modules' text later) uses a **translation
+   companion table per translatable table** — e.g. `ingredients` holds
+   locale-independent fields, `ingredient_translations` (ingredient_id,
+   locale, name) holds one row per language with a real foreign key
+   (`on delete cascade`) back to its parent. A `locales` reference table
+   backs every such table; Spanish is the required default, other
+   locales are optional, and a missing translation falls back to the
+   default at read time (`coalesce`, a query-time concern, not a schema
+   one). Each companion table stays owned by its own module, consistent
+   with the connector-pattern boundary rule.
+
+**Alternatives considered:**
+- *A column per locale* (`name_es`, `name_ca`, `name_en`) — rejected for
+  the same reason nutrients and allergens weren't modeled as fixed
+  columns: adding a language later means an `ALTER TABLE` on every
+  translatable table across every module, repeated every time a new
+  language is added, instead of a one-time data insert.
+- *One shared `translations` table for the whole app*
+  (entity_type + entity_id + locale + field) — the most flexible option
+  on paper, but rejected because it becomes a shared resource every
+  module reaches into (conflicts with the connector-pattern module
+  -boundary rule) and loses a real foreign key, since `entity_id` isn't
+  actually tied to one specific parent table the way a per-table
+  companion table's FK is.
+
+**Why decided now instead of when Recipes (Phase 3) needs it:**
+retrofitting this later would mean migrating whatever ad hoc `name`/
+`title` columns Recipes (and every other module) had already shipped
+with, instead of building every future translatable table against one
+settled pattern from the start. This is now a standing convention in
+`ARCHITECTURE.md` and `CLAUDE.md`, not a Phase-2-only decision — every
+future module with translatable content reuses it without needing to
+re-decide the shape.
+
+---
+
+## 2026-09-11 — Phase 2 delivery decisions (reviewing the plan for
+buildability)
+
+**Context:** a review pass over the Phase 2 requirements, specifically
+looking for what would block or force guesswork during implementation.
+The data model held up; the gaps were all about *delivery*. Full spec now
+lives in `PHASE_2_PLAN.md`.
+
+**Decisions:**
+1. **Phase 2 ships a read-only browse/search/detail UI**, not just the
+   data model. Alternative considered: data + tests only, with UI waiting
+   for Phase 3 to consume it — leaner, but it leaves no way to visually
+   sanity-check a few hundred hand-curated ingredients, and Phase 3 needs
+   ingredient-picker components regardless.
+2. **Seed data is ~150–250 hand-curated ingredients**, not a bulk import.
+   Alternatives considered: BEDCA (Spanish, aligns with the AESAN food
+   groups, but needs a licensing check before redistribution in a product
+   intended to be monetized) and USDA FoodData Central (public domain, so
+   no licensing risk, but English-only names and thousands of US-centric
+   entries). Hand-curation gives a catalog that matches what the household
+   actually cooks with; bulk import stays available later if it feels thin.
+3. **Ingredient curation happens through a versioned dataset + importer
+   script in the repo**, with Supabase Studio kept only for one-off fixes.
+   This revisits the earlier "Studio is enough, no admin tooling needed"
+   decision, which was made when an ingredient was two fields. After
+   nutrition, food group, units, tags and translations, one ingredient is
+   roughly 50 rows across five tables — hand-typing that in Studio is slow
+   and error-prone enough to discourage keeping the catalog current. A
+   typed `data/ingredients.ts` also turns a mistyped food-group or nutrient
+   code into a compile error caught by CI, instead of a runtime failure.
+   Building an in-app admin form was considered and rejected as premature
+   while one person curates.
+4. **Fixed vocabulary is translated via `next-intl` message keys, not
+   database translation tables.** Food group, allergen, unit and nutrient
+   display names live in the message catalogs; the database stores stable
+   `code` values. The rule of thumb this establishes: *content users create
+   → database translation tables; fixed vocabulary shipped with the app →
+   message files.* Avoids four more tables and a join on every filter
+   query. The alternative (companion translation tables for every
+   reference table, fully consistent with the content pattern) was
+   rejected as consistency for its own sake.
+5. **Phase 1's 17 hardcoded-English `.tsx` files get retrofitted to
+   `next-intl` as part of Phase 2**, rather than leaving a half-translated
+   app until later.
+
+**Schema corrections this review caught**, both from drafting against the
+real codebase rather than from memory:
+- Primary keys are `bigint generated always as identity`, matching
+  `households`/`household_members`. An earlier sketch in conversation used
+  `uuid`, which only appears on `profiles` because it mirrors
+  `auth.users.id`.
+- `ingredients.default_unit_id` was dropped in favour of an `is_default`
+  flag on `ingredient_allowed_units` (with a partial unique index). With a
+  column on `ingredients`, "the default unit must also be an allowed unit"
+  needs a trigger to enforce; moving the flag into the join table makes
+  that violation structurally impossible instead. Strictly less machinery.
+- `ingredients.created_by` was dropped — a leftover from when users could
+  insert ingredients. Under admin curation every row is written by the
+  service role, so the column would always be null.
+- Added `ingredients.nutrition_basis` (`per_100g` / `per_100ml`). EU labels
+  declare per 100 g for solids and per 100 ml for liquids; without an
+  explicit basis the two would be silently mixed in the same column.
+- Added `ingredients.code` (stable slug). Since names are now per-locale
+  rows, there was no natural key for the seed importer to upsert against.
+
+**Risk flagged, not yet resolved:** this project runs Next.js 16, where
+middleware is `src/proxy.ts` exporting `proxy()` — and that file already
+owns Supabase's session-refresh response. `next-intl`'s documented setup
+assumes `middleware.ts` and wants to own the response too. Composing them
+is the one genuine unknown in Phase 2 and is scheduled as a spike before
+the rest of the i18n work. Also carried forward: the `db-tests` CI job has
+still never actually executed (flagged in Phase 1), and Phase 2 adds ~30
+pgTAP assertions that depend on it.
+
+---
+
+## 2026-09-11 — Ingredient subtypes: variants curated now, the
+*relationship* between them deferred (reconsidered on request)
+
+**Context:** an explicit re-examination of whether subtypes (whole vs.
+skimmed vs. lactose-free milk) should enter the Phase 2 schema rather
+than being deferred alongside substitutes.
+
+**Clarification the review produced:** subtypes were never actually
+blocked. Because each variant has genuinely different nutrition, each is
+its own ingredient row under the existing schema — nothing needed adding
+to curate them. The only real question was whether to add an explicit
+*relationship* linking variants.
+
+**Decision:** curate variants as ordinary separate ingredients in Phase 2;
+defer the linking structure. Enforce a shared-prefix naming convention in
+the seed data ("Leche entera", "Leche desnatada", ...) so the grouping
+stays mechanically reconstructible later — see `PHASE_2_PLAN.md` §6.
+
+**Alternatives considered:**
+- *A self-referential `parent_ingredient_id`* — the cheapest schema change
+  (one nullable FK), but it forces answering "is the parent itself a
+  usable ingredient?" now. If yes, the parent needs invented average
+  nutrition values and Phase 3/5/6 immediately face "recipe wants Leche,
+  fridge holds Leche desnatada — does that satisfy it?", which *is* the
+  deliberately-deferred substitute semantics. If no, it needs an
+  `is_abstract` flag plus nullable nutrition/units, punching holes in the
+  `not null` constraints just tightened in this phase.
+- *A separate `ingredient_groups` grouping table* — dodges both problems
+  cleanly (no abstract ingredient row at all), but because group names are
+  open-ended content rather than fixed vocabulary, this project's own i18n
+  rule makes it two tables (`ingredient_groups` +
+  `ingredient_group_translations`) for what is currently only a
+  browse-list nicety at ~200 ingredients.
+
+**Why the reasoning that justified building allergens now does *not*
+transfer here** — worth recording, since the two cases look superficially
+alike: allergens earned "build it now" because the data is genuine
+per-ingredient research (does this contain sulphites?) that's expensive to
+reconstruct in a second pass over the catalog. Subtype grouping is almost
+entirely derivable from the ingredient names themselves, so a later pass
+is cheap. The "retrofitting means re-curating everything" argument is real
+in one case and not the other; applying it by analogy would have been
+wrong.
+
+**Why deferring is the safer direction here specifically:** designing a
+relationship before the feature that consumes it invites designing it
+wrong. Substitutes and subtypes turn out to be the same underlying
+question — "what may stand in for what" — so they should be designed
+together, against real behaviour, on top of variant data that by then
+already exists.
+
+---
+
+## 2026-09-11 — Seed importer must be atomic per ingredient (Phase 1's
+orphaned-row bug, caught recurring in the Phase 2 plan)
+
+**Context:** tracing the knowledge graph surfaced that the Phase 2 testing
+plan *cites* the `createHousehold` RLS/atomicity bug but contains no
+assertion covering its Phase 2 equivalent. Checking the plan against
+`phase1_invariants.sql` confirmed the gap was real.
+
+**The recurrence:** Phase 1's bug was a parent row (`households`) written
+separately from the child row that gives it meaning (`household_members`),
+where a failure in between left an orphan. Phase 2's seed importer had
+exactly that shape — an `ingredients` row plus four companion tables,
+described as "upsert the parent, then replace the companion rows", with no
+transaction specified. An `ingredients` row without its default-locale
+translation is an ingredient with no name in any language.
+
+**Decision:**
+1. `scripts/seed-ingredients.ts` writes each ingredient's parent row and
+   all companion rows **in one transaction** — all or nothing.
+2. Two pgTAP assertions added (~30 → ~32): a full write produces every
+   companion row, and a *failed* write leaves no orphaned `ingredients`
+   row behind — the direct twin of `phase1_invariants.sql:L85`.
+
+**Why validation wasn't already enough:** the plan already required the
+script to validate before writing, and that reads like sufficient safety
+but isn't. Validation guards against bad *input*; atomicity guards against
+failure *during* the write. Phase 1 established that distinction the
+expensive way and the plan still lost it.
+
+**Why the re-seed path is worse than Phase 1's was:** "replace the
+companion rows" means delete-then-insert. Phase 1's failure mode could
+only fail to *create* data; this one can *destroy* existing good data,
+leaving a previously-named ingredient nameless on a re-run — and re-running
+the seed is supposed to be the safe operation.
+
+**Worth remembering as a process note:** this session argued the Phase 1
+lesson, logged it in this file, and cited it in the Phase 2 test plan — and
+still wrote a seed process that repeated the shape. Citing a lesson is not
+the same as applying it. The gap was found by tracing the graph's own
+`testing plan → createHousehold bug` edge and asking whether the plan
+actually covered what it referenced, which is a cheap check worth repeating
+whenever a plan cites a past incident.
+
+---
+
+## 2026-09-11 — Ingredient seasonality: region × month rows, one seeded
+region, and why it is not modelled as tags
+
+**Context:** seasonality was added to Phase 2 scope — which ingredients are
+in season, when — with the requirement that it vary by region, for a
+possible future "prioritise seasonal ingredients and recipes" feature.
+
+**Decision:** two new tables. `regions` (shared platform reference data,
+alongside `locales` and `units`) and `ingredient_seasonality
+(ingredient_id, region_id, month)`, one row per in-season month. Seeded
+with exactly one region, `es`. Region display names via `next-intl`
+message keys, consistent with the other fixed vocabularies.
+
+**Why not the `dietary_tags` pattern** (the question that started this):
+that pattern is boolean membership — "this ingredient carries this tag" —
+which works for allergens and diets because they are binary, context-free
+and few per ingredient. Seasonality is none of those: it is a time range,
+it is region-dependent, and it is therefore a three-way relationship
+(ingredient × region × month). Forcing it into tags would mean labels like
+`seasonal_spain_june`, i.e. 12 months × N regions of flat strings, turning
+"what's in season now" into string parsing. Same anti-pattern as modelling
+the ~40 nutrients as boolean columns or tags.
+
+**Why one row per month rather than a start/end range:** ranges read more
+naturally but break on two common cases — wraparound (Spanish citrus runs
+November–March, so `start_month > end_month` needs special-casing in every
+query) and split seasons (two harvests in one year, which a single range
+cannot express at all). A row per month makes both free and reduces the
+lookup to one indexed equality. At most 12 rows per ingredient per region.
+
+**Why the table is `regions` and not `countries`:** a seasonality region is
+really *a market* — what reaches the shops, and when — which is climate
+plus local agriculture plus trade. A country is a good proxy for compact,
+market-integrated countries (and is how essentially every published
+seasonal calendar is organised), and works better than raw climate would
+predict because national distribution smooths internal variation: a shopper
+in Bilbao buys Almería tomatoes. But it breaks for continental-scale
+countries — US calendars are published per state, and Brazil, China, India,
+Australia, Argentina, Chile and Canada have the same problem. Keeping the
+table granularity-agnostic means `es` today and `us_ca` or `es_canarias`
+later are all just rows. Naming it `countries` would have baked in an
+assumption known in advance to be wrong for some markets.
+
+**A model proposed in this session and rejected, worth recording because
+it was wrong in an instructive way:** the first proposal was ~9 global
+*climate bands* (Mediterranean, Atlantic temperate, continental, tropical,
+and their southern-hemisphere counterparts), on the reasoning that climate
+is what physically drives growing seasons. The user rejected it: California
+and Spain share a Mediterranean climate but grow different crops at
+different scales, so a shared row would be confidently wrong for both.
+The correction is that seasonality data encodes *market availability*, not
+*growing conditions* — climate is only one input. The tell that should have
+caught it earlier: every published seasonal calendar in the world is
+organised nationally, which is evidence about the right unit, not an
+accident of convenience. This also retracted a naming recommendation that
+depended on the wrong model (`mediterranean_iberian` over `es`).
+
+**Why one seeded region, and why that isn't the allergen case:** the test
+used repeatedly this phase is "how expensive is this to reconstruct later".
+For allergens the answer was "a full re-curation pass", so they were built
+now. For regions it is "no more expensive than doing it now" — adding
+Portugal later is new research either way, with no retrofit penalty, while
+every speculative region multiplies curation immediately (~60 seasonal
+ingredients × N regions) for regions with no users.
+
+**Known limitation, recorded rather than solved:** absence of seasonality
+rows is ambiguous. For `es`, no rows on flour means "not seasonal, available
+year-round"; no rows on mango means "not grown here, imported year-round".
+Both read as "no local season", which is correct for a
+prioritise-what's-in-season feature. Distinguishing "never grown locally"
+is a *local sourcing* feature and is deferred.
+
+---
+
+## 2026-09-11 — Households get a region (`households.region_id`), defaulting
+to Spain, changeable by any owner
+
+**Context:** seasonality is stored per region, but nothing in the app could
+say *which* region a household is in — leaving `ingredient_seasonality`
+keyed by something unaddressable. This was initially deferred to a later
+phase and has been pulled into Phase 2.
+
+**Decision:** `households.region_id`, `not null`, referencing
+`public.regions`. Defaults to Spain at creation; any owner can change it
+afterwards from the household settings page.
+
+**Why now rather than later:** the deferral test used throughout this phase
+is "how expensive is this to reconstruct later", and by that test alone
+this is cheap to defer (a nullable column, backfilled to `es`, no research
+required). Two things outweighed it: without it the Phase 2 seasonality
+data has no consumer that can even name a region, and the household
+settings page is already being modified this phase for the i18n retrofit —
+so the UI lands on a screen already being touched rather than opening new
+surface later.
+
+**Notable: this is the only Phase 2 change to an existing Phase 0/1
+table.** Everything else in the phase is new tables, which is why it needs
+more care than the rest.
+
+**Three-step migration, not one statement:** `add column ... not null` on a
+table with existing rows requires those rows populated first, and a column
+`default` cannot be a subquery in Postgres. So: add nullable → backfill
+from `regions.is_default` → set `not null`. The default region is resolved
+at insert time instead of being declared on the column.
+
+**`create_household()` had to be updated** — it inserted `households
+(name)` only and would have violated the new `not null`. Deliberately
+*without* adding a `_region_id` parameter: the requirement is "default at
+creation, change later in settings", so creation never chooses, and holding
+the signature at `create_household(_name text)` means the four existing
+Phase 1 pgTAP assertions calling it keep passing unmodified. Its
+`SECURITY DEFINER`, its `revoke ... from public`, and its comment block are
+all load-bearing (see the 2026-09-08 entries) and must survive the
+`create or replace` intact.
+
+**Default resolved via `regions.is_default`, not a hardcoded `code = 'es'`**
+— keeps the country out of the function body and mirrors how
+`locales.is_default` already works. `regions` gains the flag plus a partial
+unique index, the same shape as `locales`.
+
+**No new RLS policy was needed, which is worth recording explicitly.** The
+existing `households_update` policy is already owner-only for the whole
+row, so "any owner may change the region, members may not" is satisfied by
+what Phase 1 already built. Five pgTAP assertions were added anyway
+(default applied on creation; owner can update; member cannot; non-member
+cannot; FK and not-null enforced) — because the behaviour here is
+*inherited* rather than stated, and inherited behaviour is the kind that
+breaks silently when someone later edits the policy for an unrelated
+reason.
+
+---
+
+## 2026-09-11 — Phase 2 plan review: the seed importer becomes an RPC, and
+cross-dimension conversion is un-deferred
+
+**Context:** a defect review of `PHASE_2_PLAN.md` before any of it is
+built. Fourteen issues were found; two were design reversals rather than
+typos and are recorded here.
+
+### Reversal 1 — atomicity via a Postgres function, because the previous
+instruction was unbuildable
+
+The plan required each ingredient to be written "in a single transaction"
+while also specifying the service-role Supabase client for the seed script.
+Those are incompatible: supabase-js talks to PostgREST, where **every call
+is its own transaction**, so five table writes cannot be wrapped in one. The
+requirement could not have been implemented as written — it would have been
+discovered at build time, probably by shipping a non-atomic importer that
+looked like it satisfied the plan.
+
+**Decision:** `public.upsert_ingredient(payload jsonb)`, a Postgres
+function shipped as a migration and called once per ingredient via
+`supabase.rpc()`. A function body is a single transaction, so a failure
+anywhere in it rolls back the whole ingredient with no client-side
+transaction management.
+
+**Alternative considered:** connecting directly to Postgres with
+`pg`/`postgres.js` and a connection string, where real transactions are
+available. Rejected — it adds a second database access path and a second
+credential to the project for the sake of one script, where the RPC reuses
+what already exists.
+
+**Note it is `SECURITY INVOKER`, deliberately unlike `create_household`.**
+It is only ever called by the seed script under the service role, which
+already bypasses RLS, so it needs no elevation — and `EXECUTE` is revoked
+from `public`/`anon`/`authenticated`, with a pgTAP assertion guarding that.
+Granting it to `authenticated` would hand every signed-in user a write path
+into the admin-curated catalog, defeating the phase's entire RLS model.
+
+**This is the third time the same lesson has surfaced in one session:**
+`create_household` (Phase 1, shipped broken), the seed importer's
+delete-then-insert path (caught by tracing the graph), and now the
+transaction mechanism itself. A multi-row write that must be all-or-nothing
+belongs in one Postgres function, not in a sequence of client calls.
+
+### Reversal 2 — cross-dimension unit conversion is back in scope, approximately
+
+The plan previously ruled cross-dimension conversion (1 tbsp flour → grams)
+out of scope *because* it needs per-ingredient density, and separately had
+no way to compute nutrition for count-based ingredients (nutrition is per
+100 g, but a recipe says "2 eggs").
+
+**Decision:** two nullable columns on `ingredients` —
+`density_g_per_ml` (volume ↔ mass) and `grams_per_unit` (count → mass).
+
+**Why the reversal:** the user's criterion was that perfect precision
+matters less than usability. Once an approximate egg weight is acceptable,
+an approximate density is no different in kind — 1 ml of olive oil ≈ 0.92 g
+is exactly the same sort of fudge as 1 egg ≈ 60 g. Accepting both is
+strictly more useful than accepting neither.
+
+**It also deleted a constraint rather than adding one.** The review's
+original proposal was a hard rule that all allowed units of an ingredient
+must share a dimension — which would have meant flour *cannot* be measured
+in tablespoons. With a density, that restriction is unnecessary: the
+cross-dimension case is computable, so it can simply be allowed. Preferring
+the option that removes a restriction over the one that adds a rule is the
+better outcome on the project's simplicity priority as well as on
+usability.
+
+**Recorded limits:** both values are deliberate approximations and must
+never be surfaced as exact nutrition (a large egg is not a medium egg). The
+conversion *logic* is still not written in Phase 2 — nothing computes
+quantities yet. What changed is only that the data it will need is gathered
+during curation instead of demanding a second research pass over the
+catalog later, which is the same reasoning that put allergens in this phase.
+
+### Also fixed in the same pass (defects, not reversals)
+
+A missing `is_default` region would have made `create_household()` fail for
+every user — a total outage of a Phase 1 feature caused by absent Phase 2
+reference data, since the partial unique index guarantees *at most* one
+default and never *at least* one. Now asserted, with the migration ordering
+(create → seed → alter) made explicit because the backfill silently writes
+NULLs if `regions` is not yet seeded. Alongside: `nutrition_basis` was
+undefined for count-based ingredients; `ingredient_seasonality` was missing
+from the companion-table lists; `getIngredient` now keys on `code` rather
+than `id` so detail URLs survive a re-seed; `listUnits()` was removed from
+the ingredients module because it contradicted the shared-reference-data
+rule; and a covering index was dropped as unearned optimisation on a
+few-thousand-row table.
+
+---

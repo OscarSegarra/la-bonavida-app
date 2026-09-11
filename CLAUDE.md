@@ -29,6 +29,19 @@ testing, anything non-trivial):
 4. Keep this file up to date as conventions evolve, so every future session
    inherits them automatically without Oscar repeating himself.
 
+## Growth trajectory
+
+The app starts in beta with a small number of trusted households, but is
+expected to eventually go public and be monetized. This doesn't change how
+things are built now — still MVP-simple, still YAGNI — but it changes which
+shortcuts are safe: a shortcut fine for a handful of trusted people (e.g.
+"anyone can write here, no one can ever moderate it") can become a real
+abuse or trust problem once strangers can sign up. Wherever a decision
+opens a shared resource to user input, prefer the option that won't need
+re-architecting later, even at the cost of a few extra lines now. See
+`PLAN.md`'s pre-public-launch checklist and `DECISIONS.md` (global
+ingredients catalog) for a worked example.
+
 ## Priority order when goals conflict
 
 **Security, then simplicity, then modularity, then efficiency.** When two
@@ -57,11 +70,30 @@ See `supabase/migrations/` and `DECISIONS.md` for the RLS design (notably
 the `private.household_role()` SECURITY DEFINER helper used to avoid
 recursive policies).
 
+**Deliberate exception:** shared reference data that isn't private to one
+household (e.g. the global `ingredients` catalog, Phase 2) is not
+`household_id`-scoped — it's a global table with its own write-access
+policy instead of household RLS. This must stay a rare, explicitly-logged
+exception (see `DECISIONS.md`), never a default — if you're adding a new
+table and reaching for "global" instead of `household_id`-scoped, that's a
+decision to discuss and log, not assume.
+
 New schema changes are **migrations**, checked into
 `supabase/migrations/*.sql` and reviewed like any other code change before
 being applied — this is how real teams evolve a shared database without
 each other's changes clobbering one another or drifting environments out of
 sync.
+
+## Internationalization
+
+The app is multi-language from Phase 2 onward (Spanish, Catalan, English
+to start; more later). App chrome uses `next-intl`. User-facing *content*
+(ingredient names, later recipe titles/instructions, etc.) uses a
+**translation companion table per translatable table**
+(`<table>_translations`, one row per locale, real FK back to its parent)
+— never a column per locale, never one shared cross-module translations
+table. See `ARCHITECTURE.md` ("Internationalization") for the full
+pattern and why; every module with translatable content reuses it.
 
 ## Environments
 

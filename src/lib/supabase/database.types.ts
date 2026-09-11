@@ -12,8 +12,75 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
+      dietary_tags: {
+        Row: {
+          category: string
+          code: string
+          id: number
+          sort_order: number
+        }
+        Insert: {
+          category: string
+          code: string
+          id?: never
+          sort_order: number
+        }
+        Update: {
+          category?: string
+          code?: string
+          id?: never
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      food_groups: {
+        Row: {
+          code: string
+          id: number
+          sort_order: number
+          source_note: string | null
+        }
+        Insert: {
+          code: string
+          id?: never
+          sort_order: number
+          source_note?: string | null
+        }
+        Update: {
+          code?: string
+          id?: never
+          sort_order?: number
+          source_note?: string | null
+        }
+        Relationships: []
+      }
       household_invites: {
         Row: {
           created_at: string
@@ -100,16 +167,272 @@ export type Database = {
           created_at: string
           id: number
           name: string
+          region_id: number
         }
         Insert: {
           created_at?: string
           id?: never
           name: string
+          region_id: number
         }
         Update: {
           created_at?: string
           id?: never
           name?: string
+          region_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "households_region_id_fkey"
+            columns: ["region_id"]
+            isOneToOne: false
+            referencedRelation: "regions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingredient_allowed_units: {
+        Row: {
+          ingredient_id: number
+          is_default: boolean
+          unit_id: number
+        }
+        Insert: {
+          ingredient_id: number
+          is_default?: boolean
+          unit_id: number
+        }
+        Update: {
+          ingredient_id?: number
+          is_default?: boolean
+          unit_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredient_allowed_units_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingredient_allowed_units_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingredient_dietary_tags: {
+        Row: {
+          ingredient_id: number
+          tag_id: number
+        }
+        Insert: {
+          ingredient_id: number
+          tag_id: number
+        }
+        Update: {
+          ingredient_id?: number
+          tag_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredient_dietary_tags_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingredient_dietary_tags_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "dietary_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingredient_nutrients: {
+        Row: {
+          amount: number
+          ingredient_id: number
+          nutrient_id: number
+        }
+        Insert: {
+          amount: number
+          ingredient_id: number
+          nutrient_id: number
+        }
+        Update: {
+          amount?: number
+          ingredient_id?: number
+          nutrient_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredient_nutrients_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingredient_nutrients_nutrient_id_fkey"
+            columns: ["nutrient_id"]
+            isOneToOne: false
+            referencedRelation: "nutrients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingredient_seasonality: {
+        Row: {
+          ingredient_id: number
+          month: number
+          region_id: number
+        }
+        Insert: {
+          ingredient_id: number
+          month: number
+          region_id: number
+        }
+        Update: {
+          ingredient_id?: number
+          month?: number
+          region_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredient_seasonality_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingredient_seasonality_region_id_fkey"
+            columns: ["region_id"]
+            isOneToOne: false
+            referencedRelation: "regions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ingredient_translations: {
+        Row: {
+          ingredient_id: number
+          locale: string
+          name: string
+        }
+        Insert: {
+          ingredient_id: number
+          locale: string
+          name: string
+        }
+        Update: {
+          ingredient_id?: number
+          locale?: string
+          name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredient_translations_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ingredient_translations_locale_fkey"
+            columns: ["locale"]
+            isOneToOne: false
+            referencedRelation: "locales"
+            referencedColumns: ["code"]
+          },
+        ]
+      }
+      ingredients: {
+        Row: {
+          code: string
+          created_at: string
+          density_g_per_ml: number | null
+          food_group_id: number
+          grams_per_unit: number | null
+          id: number
+          nutrition_basis: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          density_g_per_ml?: number | null
+          food_group_id: number
+          grams_per_unit?: number | null
+          id?: never
+          nutrition_basis: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          density_g_per_ml?: number | null
+          food_group_id?: number
+          grams_per_unit?: number | null
+          id?: never
+          nutrition_basis?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ingredients_food_group_id_fkey"
+            columns: ["food_group_id"]
+            isOneToOne: false
+            referencedRelation: "food_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      locales: {
+        Row: {
+          code: string
+          is_default: boolean
+          name: string
+        }
+        Insert: {
+          code: string
+          is_default?: boolean
+          name: string
+        }
+        Update: {
+          code?: string
+          is_default?: boolean
+          name?: string
+        }
+        Relationships: []
+      }
+      nutrients: {
+        Row: {
+          category: string
+          code: string
+          eu_mandatory: boolean
+          id: number
+          measure_unit: string
+          sort_order: number
+        }
+        Insert: {
+          category: string
+          code: string
+          eu_mandatory?: boolean
+          id?: never
+          measure_unit: string
+          sort_order: number
+        }
+        Update: {
+          category?: string
+          code?: string
+          eu_mandatory?: boolean
+          id?: never
+          measure_unit?: string
+          sort_order?: number
         }
         Relationships: []
       }
@@ -128,6 +451,45 @@ export type Database = {
           alias?: string
           created_at?: string
           id?: string
+        }
+        Relationships: []
+      }
+      regions: {
+        Row: {
+          code: string
+          id: number
+          is_default: boolean
+        }
+        Insert: {
+          code: string
+          id?: never
+          is_default?: boolean
+        }
+        Update: {
+          code?: string
+          id?: never
+          is_default?: boolean
+        }
+        Relationships: []
+      }
+      units: {
+        Row: {
+          code: string
+          dimension: string
+          id: number
+          to_base_factor: number
+        }
+        Insert: {
+          code: string
+          dimension: string
+          id?: never
+          to_base_factor: number
+        }
+        Update: {
+          code?: string
+          dimension?: string
+          id?: never
+          to_base_factor?: number
         }
         Relationships: []
       }
@@ -274,6 +636,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },

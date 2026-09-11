@@ -1,6 +1,8 @@
-import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import { createClient } from "@/lib/supabase/server";
+import { Link, redirect } from "@/i18n/navigation";
+import { LocaleSwitcher } from "../../../LocaleSwitcher";
 import {
   getHousehold,
   getMyRole,
@@ -25,10 +27,11 @@ import {
  * Real logic worth documenting: computes `isSoleOwner` from the roster
  * (mirroring `Roster.tsx`'s own `ownerCount` check) to decide whether to
  * show "Leave household" at all, or a note explaining why not - a
- * proactive UI mirror of the zero-owner guard trigger, same reasoning as
- * `Roster.tsx`'s per-row gating.
+ * proactive UI mirror of the zero-owner guard trigger, so hitting that
+ * guard (an uncaught error, caught only by `error.tsx`) is the exception,
+ * not the normal path.
  * @param params Route params - `id` is the household's numeric id, as a
- * string (from the URL).
+ * string (from the URL), and `locale` the active language.
  * @returns A 404 if `id` isn't a valid number, the household doesn't
  * exist, the caller isn't a member, or (edge case) the caller has no
  * profile despite having a session - shouldn't happen via normal
@@ -40,9 +43,9 @@ import {
 export default async function HouseholdSettingsPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ id: string; locale: string }>;
 }) {
-  const { id } = await params;
+  const { id, locale } = await params;
   const householdId = Number(id);
   if (!Number.isInteger(householdId)) notFound();
 
@@ -50,7 +53,7 @@ export default async function HouseholdSettingsPage({
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+  if (!user) redirect({ href: "/login", locale });
 
   const [household, myRole, profile] = await Promise.all([
     getHousehold(supabase, householdId),
@@ -60,9 +63,12 @@ export default async function HouseholdSettingsPage({
   if (!household || !myRole || !profile) notFound();
 
   const isOwner = myRole === "owner";
-  const [roster, pendingInvites] = await Promise.all([
+  const [roster, pendingInvites, t, tCommon, tAlias] = await Promise.all([
     getRoster(supabase, householdId),
     isOwner ? listPendingInvites(supabase, householdId) : Promise.resolve([]),
+    getTranslations("Settings"),
+    getTranslations("Common"),
+    getTranslations("Alias"),
   ]);
   const isSoleOwner =
     isOwner && roster.filter((m) => m.role === "owner").length === 1;
@@ -74,18 +80,19 @@ export default async function HouseholdSettingsPage({
           href={`/households/${householdId}`}
           className="text-sm text-zinc-500 dark:text-zinc-400"
         >
-          ← Back
+          {tCommon("back")}
         </Link>
+        <LocaleSwitcher />
       </div>
 
       <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">
-        {household.name} — Settings
+        {t("title", { name: household.name })}
       </h1>
 
       {isOwner && (
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-            Rename household
+            {t("renameSection")}
           </h2>
           <RenameHouseholdForm householdId={householdId} currentName={household.name} />
         </section>
@@ -93,7 +100,7 @@ export default async function HouseholdSettingsPage({
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-          Members
+          {t("membersSection")}
         </h2>
         <Roster
           householdId={householdId}
@@ -105,23 +112,23 @@ export default async function HouseholdSettingsPage({
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-          Your name
+          {t("yourNameSection")}
         </h2>
         <AliasForm
           action={submitUpdateAlias}
           defaultValue={profile.alias}
-          submitLabel="Save"
+          submitLabel={tAlias("save")}
         />
       </section>
 
       {isOwner && (
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-            Invite someone
+            {t("inviteSection")}
           </h2>
           <InviteGenerator householdId={householdId} />
           <h3 className="mt-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-            Pending invite links
+            {t("pendingInvites")}
           </h3>
           <InvitesList householdId={householdId} invites={pendingInvites} />
         </section>
@@ -129,19 +136,18 @@ export default async function HouseholdSettingsPage({
 
       <section className="flex flex-col gap-2 border-t border-black/10 pt-6 dark:border-white/10">
         <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
-          Danger zone
+          {t("dangerZone")}
         </h2>
         <div className="flex gap-2">
           {isSoleOwner ? (
             <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              You&apos;re the sole owner — promote another member to owner
-              before you can leave.
+              {t("soleOwnerCannotLeave")}
             </p>
           ) : (
             <form action={submitLeaveHousehold.bind(null, householdId)}>
               <ConfirmButton
-                label="Leave household"
-                confirmMessage="Leave this household? You'll need a new invite to rejoin."
+                label={t("leave")}
+                confirmMessage={t("leaveConfirm")}
                 className="rounded-md border border-black/10 px-3 py-1.5 text-sm dark:border-white/10"
               />
             </form>
@@ -149,8 +155,8 @@ export default async function HouseholdSettingsPage({
           {isOwner && (
             <form action={submitDeleteHousehold.bind(null, householdId)}>
               <ConfirmButton
-                label="Delete household"
-                confirmMessage="Delete this household permanently, for everyone? This can't be undone."
+                label={t("delete")}
+                confirmMessage={t("deleteConfirm")}
                 className="rounded-md border border-red-600/30 px-3 py-1.5 text-sm text-red-600 dark:text-red-400"
               />
             </form>

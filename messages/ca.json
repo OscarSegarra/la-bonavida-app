@@ -1,3 +1,94 @@
 {
-  "Smoke": { "hello": "ca" }
+  "Common": {
+    "back": "← Enrere",
+    "saving": "Desant…",
+    "errorTitle": "Alguna cosa ha anat malament",
+    "errorFallback": "S'ha produït un error inesperat.",
+    "tryAgain": "Torna-ho a provar"
+  },
+  "Roles": {
+    "owner": "propietari",
+    "member": "membre"
+  },
+  "LocaleSwitcher": {
+    "label": "Idioma"
+  },
+  "Login": {
+    "title": "Inicia la sessió a La BonaVida",
+    "email": "Correu electrònic",
+    "send": "Envia l'enllaç d'accés",
+    "sending": "Enviant…",
+    "checkEmail": "Comprova el teu correu: t'hem enviat un enllaç per entrar."
+  },
+  "Alias": {
+    "label": "Com vols que et diguem?",
+    "save": "Desa",
+    "continue": "Continua"
+  },
+  "CreateHousehold": {
+    "label": "Nom de la llar",
+    "placeholder": "p. ex. Casa Segarra",
+    "submit": "Crea la llar",
+    "pending": "Creant…"
+  },
+  "RenameHousehold": {
+    "label": "Nom de la llar",
+    "submit": "Reanomena"
+  },
+  "HouseholdPage": {
+    "settings": "Configuració",
+    "members": "Membres"
+  },
+  "Settings": {
+    "title": "{name} — Configuració",
+    "renameSection": "Reanomena la llar",
+    "membersSection": "Membres",
+    "yourNameSection": "El teu nom",
+    "inviteSection": "Convida algú",
+    "pendingInvites": "Enllaços de convit pendents",
+    "dangerZone": "Zona de risc",
+    "soleOwnerCannotLeave": "Ets l'únic propietari: ascendeix un altre membre abans de poder sortir.",
+    "leave": "Surt de la llar",
+    "leaveConfirm": "Vols sortir d'aquesta llar? Necessitaràs un nou convit per tornar-hi.",
+    "delete": "Elimina la llar",
+    "deleteConfirm": "Vols eliminar aquesta llar permanentment, per a tothom? Això no es pot desfer."
+  },
+  "Roster": {
+    "you": "(tu)",
+    "soleOwnerNote": "Únic propietari: ascendeix abans una altra persona",
+    "promote": "Ascendeix",
+    "demote": "Descendeix",
+    "remove": "Elimina"
+  },
+  "InviteGenerator": {
+    "asMember": "Membre",
+    "asOwner": "Propietari",
+    "generate": "Genera un enllaç de convit",
+    "generating": "Generant…",
+    "expiryNote": "(caduca en 7 dies, d'un sol ús)"
+  },
+  "InvitesList": {
+    "empty": "No hi ha cap enllaç de convit pendent.",
+    "invitedBy": "{role} · convidat per {alias}",
+    "revoke": "Revoca"
+  },
+  "InviteAccept": {
+    "invitation": "T'han convidat a unir-te a {household} com a {role}.",
+    "accept": "Accepta",
+    "joining": "Unint-te…",
+    "decline": "Rebutja",
+    "invalid": "Aquest enllaç de convit no és vàlid o ha caducat."
+  },
+  "Onboarding": {
+    "title": "Crea la teva llar"
+  },
+  "Validation": {
+    "aliasRequired": "Escriu un nom.",
+    "aliasTooLong": "Ha de tenir menys de 60 caràcters.",
+    "householdNameRequired": "Escriu un nom per a la llar.",
+    "householdNameTooLong": "Ha de tenir menys de 100 caràcters.",
+    "invalidRole": "Rol no vàlid.",
+    "emailRequired": "Escriu el teu correu electrònic.",
+    "serverMisconfigured": "El servidor no està configurat correctament. Posa't en contacte amb l'administrador."
+  }
 }

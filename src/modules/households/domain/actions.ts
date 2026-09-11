@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { getLocale } from "next-intl/server";
+import { redirect } from "@/i18n/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 import { validateAlias, validateHouseholdName, isMemberRole } from "./validation";
+import type { ValidationKey } from "./validation";
 import { createMyProfile, updateMyAlias } from "../data/profile";
 import {
   createHousehold,
@@ -22,10 +24,26 @@ import {
   acceptInvite,
 } from "../data/invites";
 
-export type ActionState = { error?: string };
+/**
+ * What a Server Action hands back to the form that called it.
+ *
+ * Two error fields rather than one, because the two kinds of failure are
+ * genuinely different. `errorKey` is a validation failure this app
+ * detected and named, so the UI looks the wording up in the active
+ * locale's `Validation` catalog. `error` is a message that came back from
+ * Postgres (the zero-owner guard, the invite rate limits) - already
+ * phrased for a person, and passed through untranslated rather than
+ * duplicating every database message into the catalogs and keeping them
+ * in sync with the migrations. Collapsing both into one field would mean
+ * the UI could not tell which treatment a given string needs.
+ */
+export type ActionState = { error?: string; errorKey?: ValidationKey };
 
+// Returns "" rather than an English sentence when something non-Error was
+// thrown: `domain/` has no business choosing wording, so the UI substitutes
+// a translated generic for the empty case (see useActionError).
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Something went wrong.";
+  return error instanceof Error ? error.message : "";
 }
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -68,12 +86,12 @@ export async function submitAlias(
   const alias = String(formData.get("alias") ?? "");
   const next = safeRedirectPath(String(formData.get("next") ?? ""), "/onboarding");
   const invalid = validateAlias(alias);
-  if (invalid) return { error: invalid };
+  if (invalid) return { errorKey: invalid };
 
   const supabase = await createClient();
   const result = await attempt(() => createMyProfile(supabase, alias.trim()));
   if (!result.ok) return { error: result.error };
-  redirect(next);
+  redirect({ href: next, locale: await getLocale() });
 }
 
 /**
@@ -90,7 +108,7 @@ export async function submitUpdateAlias(
 ): Promise<ActionState> {
   const alias = String(formData.get("alias") ?? "");
   const invalid = validateAlias(alias);
-  if (invalid) return { error: invalid };
+  if (invalid) return { errorKey: invalid };
 
   const supabase = await createClient();
   const result = await attempt(() => updateMyAlias(supabase, alias.trim()));
@@ -112,12 +130,12 @@ export async function submitCreateHousehold(
 ): Promise<ActionState> {
   const name = String(formData.get("name") ?? "");
   const invalid = validateHouseholdName(name);
-  if (invalid) return { error: invalid };
+  if (invalid) return { errorKey: invalid };
 
   const supabase = await createClient();
   const result = await attempt(() => createHousehold(supabase, name.trim()));
   if (!result.ok) return { error: result.error };
-  redirect(`/households/${result.value.id}`);
+  redirect({ href: `/households/${result.value.id}`, locale: await getLocale() });
 }
 
 /**
@@ -138,7 +156,7 @@ export async function submitRenameHousehold(
 ): Promise<ActionState> {
   const name = String(formData.get("name") ?? "");
   const invalid = validateHouseholdName(name);
-  if (invalid) return { error: invalid };
+  if (invalid) return { errorKey: invalid };
 
   const supabase = await createClient();
   const result = await attempt(() => renameHousehold(supabase, householdId, name.trim()));
@@ -160,7 +178,7 @@ export async function submitRenameHousehold(
 export async function submitDeleteHousehold(householdId: number) {
   const supabase = await createClient();
   await deleteHousehold(supabase, householdId);
-  redirect("/onboarding");
+  redirect({ href: "/onboarding", locale: await getLocale() });
 }
 
 // The three actions below can throw the zero-owner-guard's error (removing
@@ -227,7 +245,7 @@ export async function submitRemoveMember(
 export async function submitLeaveHousehold(householdId: number) {
   const supabase = await createClient();
   await leaveHousehold(supabase, householdId);
-  redirect("/onboarding");
+  redirect({ href: "/onboarding", locale: await getLocale() });
 }
 
 /**
@@ -245,8 +263,8 @@ export async function submitLeaveHousehold(householdId: number) {
 export async function submitCreateInviteLink(
   householdId: number,
   role: string,
-): Promise<{ token?: string; error?: string }> {
-  if (!isMemberRole(role)) return { error: "Invalid role." };
+): Promise<{ token?: string; error?: string; errorKey?: ValidationKey }> {
+  if (!isMemberRole(role)) return { errorKey: "invalidRole" as const };
   const supabase = await createClient();
   const result = await attempt(() => createInviteLink(supabase, householdId, role));
   if (!result.ok) return { error: result.error };
@@ -288,5 +306,5 @@ export async function submitAcceptInvite(
   const supabase = await createClient();
   const result = await attempt(() => acceptInvite(supabase, token));
   if (!result.ok) return { error: result.error };
-  redirect(`/households/${result.value}`);
+  redirect({ href: `/households/${result.value}`, locale: await getLocale() });
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useTranslations } from "next-intl";
 import { submitCreateInviteLink } from "../domain/actions";
 import type { MemberRole } from "../domain/validation";
 
@@ -21,6 +22,8 @@ import type { MemberRole } from "../domain/validation";
  * generation) the resulting invite URL or an error message.
  */
 export function InviteGenerator({ householdId }: { householdId: number }) {
+  const t = useTranslations("InviteGenerator");
+  const tValidation = useTranslations("Validation");
   const [role, setRole] = useState<MemberRole>("member");
   const [link, setLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -31,8 +34,13 @@ export function InviteGenerator({ householdId }: { householdId: number }) {
     setLink(null);
     startTransition(async () => {
       const result = await submitCreateInviteLink(householdId, role);
-      if (result.error) {
-        setError(result.error);
+      // Same two-kinds-of-error rule as useActionError, applied inline
+      // because this action is called directly rather than through
+      // useActionState, so there is no ActionState to hand that hook.
+      if (result.errorKey || result.error) {
+        setError(
+          result.errorKey ? tValidation(result.errorKey) : result.error!,
+        );
         return;
       }
       setLink(`${window.location.origin}/invites/${result.token}`);
@@ -49,7 +57,7 @@ export function InviteGenerator({ householdId }: { householdId: number }) {
             checked={role === "member"}
             onChange={() => setRole("member")}
           />
-          Member
+          {t("asMember")}
         </label>
         <label className="flex items-center gap-1">
           <input
@@ -58,7 +66,7 @@ export function InviteGenerator({ householdId }: { householdId: number }) {
             checked={role === "owner"}
             onChange={() => setRole("owner")}
           />
-          Owner
+          {t("asOwner")}
         </label>
         <button
           type="button"
@@ -66,7 +74,7 @@ export function InviteGenerator({ householdId }: { householdId: number }) {
           disabled={pending}
           className="rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-black"
         >
-          {pending ? "Generating…" : "Generate invite link"}
+          {pending ? t("generating") : t("generate")}
         </button>
       </div>
       {error && (
@@ -74,7 +82,7 @@ export function InviteGenerator({ householdId }: { householdId: number }) {
       )}
       {link && (
         <p className="break-all rounded-md border border-black/10 bg-zinc-50 p-2 text-xs dark:border-white/10 dark:bg-zinc-900">
-          {link} <span className="text-zinc-500">(expires in 7 days, single use)</span>
+          {link} <span className="text-zinc-500">{t("expiryNote")}</span>
         </p>
       )}
     </div>

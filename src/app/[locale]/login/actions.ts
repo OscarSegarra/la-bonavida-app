@@ -3,7 +3,16 @@
 import { createClient } from "@/lib/supabase/server";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 
-export type SendMagicLinkState = { error?: string; sent?: boolean };
+/**
+ * Same two-field split as the households module's ActionState: `errorKey`
+ * is a failure this app named and the UI translates, `error` is a message
+ * from Supabase passed through as-is.
+ */
+export type SendMagicLinkState = {
+  error?: string;
+  errorKey?: string;
+  sent?: boolean;
+};
 
 /**
  * Server Action behind the login form. Triggers Supabase's magic-link
@@ -27,14 +36,14 @@ export async function sendMagicLink(
   const email = String(formData.get("email") ?? "").trim();
   const next = safeRedirectPath(String(formData.get("next") ?? ""), "/onboarding");
 
-  if (!email) return { error: "Enter your email." };
+  if (!email) return { errorKey: "emailRequired" };
 
   // Never take the origin from client input - a hidden form field could be
   // set to anything in a direct POST, which would deliver the real auth
   // code straight to an attacker-controlled callback URL.
   const origin = process.env.SITE_URL;
   if (!origin) {
-    return { error: "Server misconfigured (SITE_URL not set). Please contact support." };
+    return { errorKey: "serverMisconfigured" };
   }
 
   const supabase = await createClient();

@@ -40,3 +40,4 @@ export { InviteAcceptCard } from "./ui/InviteAcceptCard";
 export { ConfirmButton } from "./ui/ConfirmButton";
 
 export type { MemberRole } from "./domain/validation";
+export { isMemberRole } from "./domain/validation";

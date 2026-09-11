@@ -1,3 +1,4 @@
+import { useTranslations } from "next-intl";
 import { submitRevokeInvite } from "../domain/actions";
 import type { MemberRole } from "../domain/validation";
 
@@ -15,11 +16,12 @@ export function InvitesList({
   householdId: number;
   invites: Invite[];
 }) {
+  const t = useTranslations("InvitesList");
+  const tRoles = useTranslations("Roles");
+
   if (invites.length === 0) {
     return (
-      <p className="text-sm text-zinc-500 dark:text-zinc-400">
-        No pending invite links.
-      </p>
+      <p className="text-sm text-zinc-500 dark:text-zinc-400">{t("empty")}</p>
     );
   }
 
@@ -31,14 +33,17 @@ export function InvitesList({
           className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-black/10 px-3 py-2 text-sm dark:border-white/10"
         >
           <span className="text-black dark:text-zinc-50">
-            {invite.role} · invited by {invite.invitedByAlias}
+            {t("invitedBy", {
+              role: tRoles(invite.role),
+              alias: invite.invitedByAlias,
+            })}
           </span>
           <form action={submitRevokeInvite.bind(null, householdId, invite.id)}>
             <button
               type="submit"
               className="rounded-md border border-black/10 px-2 py-1 text-xs text-red-600 dark:border-white/10 dark:text-red-400"
             >
-              Revoke
+              {t("revoke")}
             </button>
           </form>
         </li>

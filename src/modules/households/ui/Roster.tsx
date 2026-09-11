@@ -1,3 +1,4 @@
+import { useTranslations } from "next-intl";
 import {
   submitSetMemberRole,
   submitRemoveMember,
@@ -41,6 +42,8 @@ export function Roster({
   myUserId: string;
   isOwner: boolean;
 }) {
+  const t = useTranslations("Roster");
+  const tRoles = useTranslations("Roles");
   const ownerCount = members.filter((m) => m.role === "owner").length;
 
   return (
@@ -58,15 +61,15 @@ export function Roster({
           >
             <span className="text-black dark:text-zinc-50">
               {member.alias}
-              {isSelf && " (you)"}
+              {isSelf && ` ${t("you")}`}
               <span className="ml-2 text-zinc-500 dark:text-zinc-400">
-                {member.role}
+                {tRoles(member.role)}
               </span>
             </span>
 
             {isOwner && isSoleOwner && (
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                Sole owner — promote someone else first
+                {t("soleOwnerNote")}
               </span>
             )}
             {isOwner && !isSoleOwner && (
@@ -83,7 +86,7 @@ export function Roster({
                     type="submit"
                     className="rounded-md border border-black/10 px-2 py-1 text-xs dark:border-white/10"
                   >
-                    {member.role === "owner" ? "Demote" : "Promote"}
+                    {member.role === "owner" ? t("demote") : t("promote")}
                   </button>
                 </form>
                 <form
@@ -97,7 +100,7 @@ export function Roster({
                     type="submit"
                     className="rounded-md border border-black/10 px-2 py-1 text-xs text-red-600 dark:border-white/10 dark:text-red-400"
                   >
-                    Remove
+                    {t("remove")}
                   </button>
                 </form>
               </div>

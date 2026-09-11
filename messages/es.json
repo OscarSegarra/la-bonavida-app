@@ -1,3 +1,94 @@
 {
-  "Smoke": { "hello": "es" }
+  "Common": {
+    "back": "← Atrás",
+    "saving": "Guardando…",
+    "errorTitle": "Algo ha ido mal",
+    "errorFallback": "Se ha producido un error inesperado.",
+    "tryAgain": "Intentar de nuevo"
+  },
+  "Roles": {
+    "owner": "propietario",
+    "member": "miembro"
+  },
+  "LocaleSwitcher": {
+    "label": "Idioma"
+  },
+  "Login": {
+    "title": "Inicia sesión en La BonaVida",
+    "email": "Correo electrónico",
+    "send": "Enviar enlace de acceso",
+    "sending": "Enviando…",
+    "checkEmail": "Revisa tu correo: te hemos enviado un enlace para entrar."
+  },
+  "Alias": {
+    "label": "¿Cómo quieres que te llamemos?",
+    "save": "Guardar",
+    "continue": "Continuar"
+  },
+  "CreateHousehold": {
+    "label": "Nombre del hogar",
+    "placeholder": "p. ej. Casa Segarra",
+    "submit": "Crear hogar",
+    "pending": "Creando…"
+  },
+  "RenameHousehold": {
+    "label": "Nombre del hogar",
+    "submit": "Renombrar"
+  },
+  "HouseholdPage": {
+    "settings": "Ajustes",
+    "members": "Miembros"
+  },
+  "Settings": {
+    "title": "{name} — Ajustes",
+    "renameSection": "Renombrar hogar",
+    "membersSection": "Miembros",
+    "yourNameSection": "Tu nombre",
+    "inviteSection": "Invitar a alguien",
+    "pendingInvites": "Enlaces de invitación pendientes",
+    "dangerZone": "Zona de riesgo",
+    "soleOwnerCannotLeave": "Eres el único propietario: asciende a otro miembro antes de poder salir.",
+    "leave": "Salir del hogar",
+    "leaveConfirm": "¿Salir de este hogar? Necesitarás una nueva invitación para volver.",
+    "delete": "Eliminar hogar",
+    "deleteConfirm": "¿Eliminar este hogar permanentemente, para todos? Esto no se puede deshacer."
+  },
+  "Roster": {
+    "you": "(tú)",
+    "soleOwnerNote": "Único propietario: asciende antes a otra persona",
+    "promote": "Ascender",
+    "demote": "Descender",
+    "remove": "Eliminar"
+  },
+  "InviteGenerator": {
+    "asMember": "Miembro",
+    "asOwner": "Propietario",
+    "generate": "Generar enlace de invitación",
+    "generating": "Generando…",
+    "expiryNote": "(caduca en 7 días, de un solo uso)"
+  },
+  "InvitesList": {
+    "empty": "No hay enlaces de invitación pendientes.",
+    "invitedBy": "{role} · invitado por {alias}",
+    "revoke": "Revocar"
+  },
+  "InviteAccept": {
+    "invitation": "Te han invitado a unirte a {household} como {role}.",
+    "accept": "Aceptar",
+    "joining": "Uniéndote…",
+    "decline": "Rechazar",
+    "invalid": "Este enlace de invitación no es válido o ha caducado."
+  },
+  "Onboarding": {
+    "title": "Crea tu hogar"
+  },
+  "Validation": {
+    "aliasRequired": "Escribe un nombre.",
+    "aliasTooLong": "Debe tener menos de 60 caracteres.",
+    "householdNameRequired": "Escribe un nombre para el hogar.",
+    "householdNameTooLong": "Debe tener menos de 100 caracteres.",
+    "invalidRole": "Rol no válido.",
+    "emailRequired": "Escribe tu correo electrónico.",
+    "serverMisconfigured": "El servidor no está configurado correctamente. Ponte en contacto con el administrador."
+  }
 }

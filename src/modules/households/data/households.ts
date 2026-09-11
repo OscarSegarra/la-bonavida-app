@@ -27,17 +27,19 @@ export async function getMyHouseholds(supabase: Client) {
 }
 
 /**
- * Looks up a single household by id (name only - roster is a separate
- * call, see `data/members.ts`'s `getRoster`).
+ * Looks up a single household by id (roster is a separate call, see
+ * `data/members.ts`'s `getRoster`).
  * @param supabase A Supabase client scoped to the current request/session.
  * @param householdId The household's numeric id.
- * @returns `{ id, name }`, or `null` if it doesn't exist or RLS hides it
- * (the caller isn't a member).
+ * @returns `{ id, name, regions: { code } }`, or `null` if it doesn't
+ * exist or RLS hides it (the caller isn't a member). The region comes back
+ * as its code rather than its id, since that is what the UI translates and
+ * what stays stable across environments.
  */
 export async function getHousehold(supabase: Client, householdId: number) {
   const { data, error } = await supabase
     .from("households")
-    .select("id, name")
+    .select("id, name, regions(code)")
     .eq("id", householdId)
     .maybeSingle();
 

@@ -12,6 +12,7 @@ export { getMyProfile } from "./data/profile";
 export { getMyHouseholds, getHousehold } from "./data/households";
 export { getRoster, getMyRole } from "./data/members";
 export { listPendingInvites, getInviteByToken } from "./data/invites";
+export { listRegions } from "./data/regions";
 
 // Server Actions, for forms/buttons in this module's ui/ components (and
 // any route that needs to trigger a mutation).
@@ -27,6 +28,7 @@ export {
   submitCreateInviteLink,
   submitRevokeInvite,
   submitAcceptInvite,
+  submitSetHouseholdRegion,
 } from "./domain/actions";
 
 // UI building blocks for the auth/households/settings pages.
@@ -38,6 +40,7 @@ export { InviteGenerator } from "./ui/InviteGenerator";
 export { InvitesList } from "./ui/InvitesList";
 export { InviteAcceptCard } from "./ui/InviteAcceptCard";
 export { ConfirmButton } from "./ui/ConfirmButton";
+export { RegionForm } from "./ui/RegionForm";
 
 export type { MemberRole } from "./domain/validation";
 export { isMemberRole } from "./domain/validation";

@@ -5,8 +5,29 @@
  * under domain/, data/, and ui/ is private to this module — enforced by the
  * boundaries ESLint rule in eslint.config.mjs, not just by convention.
  *
- * No functions exposed yet — this module is scaffolding only until its
- * first feature lands.
+ * Note what is deliberately absent: nothing here writes. The catalog is
+ * admin-curated, so its only write path is the `upsert_ingredient` database
+ * function called by the seed script — never the app.
  */
 
-export {};
+export {
+  listIngredients,
+  getIngredient,
+  listFoodGroups,
+} from "./data/ingredients";
+export type { IngredientSummary, IngredientDetail } from "./data/ingredients";
+
+export {
+  groupNutrientsByCategory,
+  formatNutrientAmount,
+  groupMonthsIntoRuns,
+} from "./domain/nutrition";
+export type { NutrientValue, NutrientGroup, NutrientCategory } from "./domain/nutrition";
+
+export { convertQuantity } from "./domain/units";
+export type { UnitInfo, Dimension, Bridges } from "./domain/units";
+
+export { IngredientList } from "./ui/IngredientList";
+export { IngredientFilters } from "./ui/IngredientFilters";
+export { NutritionTable } from "./ui/NutritionTable";
+export { IngredientFacts } from "./ui/IngredientFacts";

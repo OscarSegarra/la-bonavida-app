@@ -278,13 +278,20 @@ select set_config('request.jwt.claims', json_build_object('sub','00000000-0000-0
 set local role authenticated;
 
 update public.households set region_id = 999999 where id = 910001;
+
+-- Observe as superuser, NOT as the stranger. households_select requires
+-- membership, so reading the row back while still acting as a non-member
+-- returns no row at all and the comparison is against null - which fails
+-- even though the behaviour under test is correct. (That is exactly how
+-- this assertion failed on its first CI run.) The member case above does
+-- not need this, because a member can legitimately see the row.
+reset role;
+
 select is(
   (select region_id from public.households where id = 910001),
   (select id from public.regions where code = 'zz_test_region'),
   'a non-member cannot change another household''s region'
 );
-
-reset role;
 
 select * from finish();
 rollback;

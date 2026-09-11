@@ -91,14 +91,95 @@ reasoning) — this replaces the original bullet list:
   through Server Actions from small Client Component buttons/forms — see
   `CLAUDE.md` for the standing convention.
 
-## Phase 2 — Recipes
-- Create/edit/delete a recipe (title, servings, instructions)
-- Attach ingredients + quantities to a recipe
-- Browse/search recipes within a household
+## Phase 2 — Ingredients
 
-## Phase 3 — Ingredients
-- Ingredient catalog scoped to a household (name, default unit)
+**Detailed build spec: `PHASE_2_PLAN.md`** — schema, module layout,
+build sequence, and the testing bar to clear before this phase is done.
+The bullets below stay the roadmap-level summary.
+
+- **Global** ingredient catalog — shared across all households, not
+  scoped to one. Deliberate exception to the usual `household_id`-scoped
+  rule; see `DECISIONS.md`.
+- **Admin-curated, not user-writable.** Authenticated users get read-only
+  access (browse/search); no household can insert, edit, or delete a
+  catalog entry. New ingredients are added directly by the project owner
+  (Supabase Studio — no in-app admin tooling needed at this scale). Since
+  there's no user-write path, there's no duplicate/moderation/abuse
+  problem to design around at all. See `DECISIONS.md`.
+- **Nutrition values:** the full EU-standard set (Regulation 1169/2011
+  Annex XIII — 7 mandatory macros, 5 voluntary macros, ~13 vitamins, ~14
+  minerals), stored **normalized**: a seeded `nutrients` reference table
+  (code, name, unit, category) + an `ingredient_nutrients` value table
+  (ingredient_id, nutrient_id, value_per_100g) holding only the values
+  actually known per ingredient. Matches how real food-composition
+  databases (USDA FoodData Central, the Spanish BEDCA) model this — the
+  data is genuinely sparse, and it suits "sum this across a day's meals"
+  (one SQL `group by nutrient_id, sum(...)`) better than a wide table
+  would. See `DECISIONS.md`.
+- **Food groups:** each ingredient has exactly one required
+  `food_group_id`, from a fixed 13-group taxonomy sourced from AESAN's
+  "Recomendaciones Dietéticas Saludables y Sostenibles" (Dec 2022):
+  Hortalizas, Frutas, Patatas y otros tubérculos, Cereales, Legumbres,
+  Frutos secos, Pescado y marisco, Huevos, Leche y lácteos, Carne, Aceite
+  de oliva, Agua, Alimentos y bebidas a limitar. Each group's
+  serving-frequency guidance from the source document is captured as a
+  note on the group row now — cheap to grab while reading the source,
+  not consumed by any feature yet (a future "did this week's meal plan
+  meet the recommendations" feature would use it).
+- **Allergens & dietary restrictions:** one unified system, not two — a
+  `dietary_tags` reference table (`category`: `allergen` or `diet`)
+  seeded with the EU's 14 official allergens plus diet labels
+  (vegetarian, vegan, more later), and an `ingredient_dietary_tags` join
+  table. Replaces hardcoded `is_vegetarian`/`is_vegan` columns — adding a
+  new diet type (halal, keto, ...) later is a data insert, not a
+  migration. Tagged by the admin in the same curation pass as nutrition/
+  food groups, not automated. See `DECISIONS.md`.
+- **Units:** a `units` reference table (code, `dimension` — mass/volume/
+  count, `to_base_factor` for same-dimension conversion, e.g. g↔kg,
+  ml↔l) plus `ingredient_allowed_units` (which units make sense for this
+  specific ingredient — e.g. eggs by count only, milk by volume only).
+  Cross-dimension conversion (cups of flour → grams) is out of scope —
+  needs a per-ingredient density value, a real feature for later, not
+  now. Phase 3 will enforce that a recipe's ingredient lines can only use
+  units that ingredient allows, and can only reference ingredients that
+  exist in the catalog.
+- **Multi-language ingredient names:** a `locales` reference table
+  (Spanish required as the default; Catalan and English from the start,
+  more later) plus `ingredient_translations` (ingredient_id, locale,
+  name) — the first application of the system-wide translation-companion
+  -table pattern. See `ARCHITECTURE.md` ("Internationalization") and
+  `DECISIONS.md` — every future module with translatable content
+  (recipes, shopping lists, ...) reuses the same pattern.
+- **Seasonality:** a `regions` reference table (seeded with `es` only) plus
+  `ingredient_seasonality` (ingredient, region, month) — one row per
+  in-season month, so wraparound seasons (citrus, Nov–Mar) and split
+  harvests work without special-casing. Captured now for a future
+  "prioritise seasonal ingredients/recipes" feature; nothing consumes it
+  in Phase 2. Deliberately *not* modelled as dietary-style tags — it's a
+  three-way ingredient × region × month relationship, not boolean
+  membership. See `DECISIONS.md`.
+- **Household region:** `households.region_id` (not null, defaults to
+  Spain, changeable by any owner from the household settings page) — the
+  one Phase 2 change to an existing Phase 0/1 table, and what makes the
+  seasonality data addressable. The existing owner-only `households_update`
+  policy already covers it; `create_household()` is updated to set the
+  default. See `PHASE_2_PLAN.md` §2.6.
+- **Search:** plain name search for now, against the requester's locale
+  with fallback to Spanish. Typo tolerance and accent/case insensitivity
+  (Postgres's built-in `pg_trgm` / `unaccent` extensions) are
+  deliberately deferred — added later purely via an index, no schema
+  change needed, so there's no cost to waiting.
+- **Needs a real seed list before beta**, not an empty table — a curated
+  set of common ingredients (by hand or imported from an open dataset
+  such as USDA FoodData Central / Open Food Facts / BEDCA) so the first
+  recipe anyone builds doesn't immediately hit a missing ingredient.
 - Reuse ingredients across recipes instead of retyping them
+
+## Phase 3 — Recipes
+- Create/edit/delete a recipe (title, servings, instructions)
+- Attach ingredients + quantities to a recipe (references the Phase 2
+  catalog — never a free-text ingredient name)
+- Browse/search recipes within a household
 
 ## Phase 4 — Meal plans
 - Assign recipes to days of a week
@@ -110,8 +191,22 @@ reasoning) — this replaces the original bullet list:
   across recipes, e.g. 2 recipes needing onions → one line item)
 - Manually add/remove/check off items
 - Multiple household members can see the same list update live
+- (No fridge-awareness yet — that's Phase 6. This phase's generation is
+  pure recipe-quantity aggregation.)
 
-## Phase 6 — Polish
+## Phase 6 — Fridge / pantry
+- Inventory of what a household currently has on hand (ingredient +
+  quantity, scoped to household — references the Phase 2 catalog, same as
+  recipes)
+- Manually add/adjust/remove fridge quantities
+- Upgrades Phase 5's shopping-list generation to subtract on-hand fridge
+  stock: recipes need 2 onions, fridge has 1, list shows "buy 1" — instead
+  of asking to buy what's already there
+- Checking off a shopping-list item does **not** auto-restock the fridge
+  (deliberately deferred — see `DECISIONS.md`); fridge quantities stay a
+  manual/explicit update for now
+
+## Phase 7 — Polish
 - Mobile-friendly UX polish (touch targets, mobile nav) — the app is
   responsive from the start (see `CLAUDE.md`), so this is refinement, not
   a redesign
@@ -130,3 +225,46 @@ reasoning) — this replaces the original bullet list:
 - Real transactional email (Resend) — needs a domain first.
 - Anything beyond meal planning / shopping lists (the CLAUDE.md mentions
   "future household management" — out of scope until the core loop works).
+- **A way for households to request a missing ingredient** — the catalog
+  is admin-curated (Phase 2), so a household can't add one themselves.
+  Fine while the project owner can just add it directly; needs a real
+  suggestion/request flow once other families are on the app and can't
+  ask directly. See "Growth trajectory" below.
+- **Ingredient substitutes and subtype relationships** (e.g. whole vs.
+  skimmed milk, or olive oil ↔ sunflower oil as an interchangeable swap)
+  — purely additive relationship layers on top of the Phase 2 catalog,
+  so nothing built now needs to anticipate them.
+  **Subtypes themselves are not deferred** — variants are curated as
+  ordinary separate ingredients in Phase 2 (their nutrition genuinely
+  differs, so they need their own rows regardless). What's deferred is
+  only the explicit *relationship* linking them, because its value
+  depends on swap behaviour that arrives with substitutes, and picking a
+  shape now risks baking in an assumption substitutes would have to
+  undo. A shared-prefix naming convention in the seed data keeps the
+  grouping reconstructible in the meantime — see `PHASE_2_PLAN.md` §6.
+  Design both together when there's real behaviour to design against,
+  likely alongside or after Phase 3 Recipes.
+
+## Growth trajectory: beta (trusted, small) → public → monetized
+
+From Phase 2 onward, assume the app starts in beta with a small number of
+known households, but is eventually opened to the public and monetized.
+This doesn't change how Phases 2–7 are built now (still MVP-simple, still
+YAGNI) — it changes which shortcuts are safe to take. A shortcut that's
+fine for a handful of trusted people can become a real abuse or trust
+problem once strangers show up, so anywhere a decision opens a shared
+resource to user input, prefer the option that doesn't need to be
+re-architected later, even if it costs a few extra lines now. Worked
+example: the global ingredients catalog ended up **admin-curated, not
+user-writable at all** (see `DECISIONS.md`) — the strongest version of
+this principle, since removing the user-write path removes the abuse
+surface entirely instead of just mitigating it.
+
+**Pre-public-launch checklist (not beta scope, revisit before opening
+signups):**
+- Ingredient request/suggestion flow, now that households can't add
+  catalog entries themselves (see "Deliberately deferred" above).
+- Rate-limiting on any open-write shared resource (pattern already exists
+  for `household_invites` — reuse it if a future feature needs it).
+- Whatever monetization requires (billing integration, plan limits) —
+  undefined until we're closer to that point.

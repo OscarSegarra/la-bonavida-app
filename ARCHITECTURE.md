@@ -79,5 +79,58 @@ data, even via a raw query, because the database refuses the row before the
 application ever sees it. See `supabase/migrations/` for the schema, and
 `DECISIONS.md` for why RLS design choices were made the way they were.
 
+**Deliberate exception:** shared reference data that isn't private to one
+household — the global `ingredients` catalog (Phase 2) and everything that
+hangs off it (nutrients, food groups, allergens/diet tags, units) — is not
+`household_id`-scoped. It's read-only for regular users, writable only by
+the project owner. See `CLAUDE.md` and `DECISIONS.md`; this must stay a
+rare, explicitly-logged exception, not a pattern to reach for by default.
+
 Security, then simplicity, then modularity, then efficiency — in that
 priority order — wins whenever two goals conflict in this codebase.
+
+## Internationalization
+
+Two separate problems, solved two different ways:
+
+**App chrome** (labels, navigation, error messages — text written in the
+codebase) uses `next-intl`, which is built for the Server-Component-first
+App Router setup this project already uses. Supported locales are a small
+code-level config (`defineRouting({locales: [...], defaultLocale: 'es'})`);
+middleware resolves the locale per request; translated strings live in
+per-locale JSON message files. Adding a UI language always means someone
+translates the app's text, so this list lives in code, not the database.
+
+**Content people create in the app** (ingredient names first; recipe
+titles/instructions, and other modules' text later) uses a **translation
+companion table per translatable table**, not a column-per-locale and not
+one shared cross-module table:
+
+- The parent table (`ingredients`) holds only locale-independent fields.
+- A `<table>_translations` table (`ingredient_translations`:
+  ingredient_id, locale, name) holds one row per language, with a real
+  foreign key back to its parent (`on delete cascade`) — owned by the
+  same module as the parent table, consistent with the module-boundary
+  rule above.
+- A `locales` reference table backs every `_translations` table. One
+  locale (Spanish) is required as the default; others are optional, and
+  a missing translation falls back to the default at read time
+  (`coalesce`d in the query, not a schema concern). `locales` itself
+  isn't owned by any one feature module — it's shared platform reference
+  data, like the migrations/CI conventions above it, so any module's
+  `data/` layer can query it directly rather than routing through
+  another module's connector for it.
+
+**Why this shape and not the alternatives:** a column per locale
+(`name_es`, `name_ca`, `name_en`) means an `ALTER TABLE` on every
+translatable table every time a language is added — rejected for the same
+reason the nutrients and allergen data below were normalized instead of
+using fixed columns. One giant shared `translations` table for the whole
+app (entity_type + entity_id + locale + field) is maximally flexible, but
+it becomes a shared resource every module reaches into and loses a real
+foreign key (entity_id points at a different table depending on
+entity_type) — it directly conflicts with the connector-pattern rule
+above. The per-table companion pattern gets the "add a language later is a
+data insert, not a migration" benefit without either downside. See
+`DECISIONS.md` for the worked example (`ingredient_translations`) and the
+full alternatives considered.

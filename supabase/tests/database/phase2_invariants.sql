@@ -1,8 +1,10 @@
 -- pgTAP tests for Phase 2's database-level invariants.
 --
--- This file grows with the phase. It currently covers slice 1: the global
--- reference vocabularies and the household region setting. Slice 2 will add
--- the ingredient tables and the upsert_ingredient() write path.
+-- This file grows with the phase. It currently covers slice 1 (the global
+-- reference vocabularies and the household region setting) and slice 2
+-- (the ingredient catalog and its five companion tables). Slice 4 will add
+-- the seeded-data assertions and the upsert_ingredient() write path, both
+-- of which need data and a function that do not exist yet.
 --
 -- Run with the Supabase CLI (`supabase test db`) or pg_prove against any
 -- Postgres with this project's migrations applied. Self-contained and
@@ -21,7 +23,7 @@
 create extension if not exists pgtap;
 
 begin;
-select plan(35);
+select plan(66);
 
 -- Fixtures: an owner, a plain member, and a stranger, plus one household.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -291,6 +293,253 @@ select is(
   (select region_id from public.households where id = 910001),
   (select id from public.regions where code = 'zz_test_region'),
   'a non-member cannot change another household''s region'
+);
+
+-- =====================================================================
+-- Slice 2: the ingredient catalog.
+--
+-- Fixtures are created as superuser. Ids are looked up by code rather
+-- than forced with OVERRIDING SYSTEM VALUE, since code is the natural key
+-- the rest of the system uses anyway.
+-- =====================================================================
+
+insert into public.ingredients (code, food_group_id, nutrition_basis, density_g_per_ml)
+values (
+  'zz_test_milk',
+  (select id from public.food_groups where code = 'lacteos'),
+  'per_100ml',
+  1.03
+);
+
+insert into public.ingredients (code, food_group_id, nutrition_basis, grams_per_unit)
+values (
+  'zz_test_egg',
+  (select id from public.food_groups where code = 'huevos'),
+  'per_100g',
+  60
+);
+
+insert into public.ingredient_translations (ingredient_id, locale, name) values
+  ((select id from public.ingredients where code = 'zz_test_milk'), 'es', 'ZZ Leche'),
+  ((select id from public.ingredients where code = 'zz_test_egg'),  'es', 'ZZ Huevo');
+
+insert into public.ingredient_nutrients (ingredient_id, nutrient_id, amount) values
+  ((select id from public.ingredients where code = 'zz_test_milk'),
+   (select id from public.nutrients where code = 'protein'), 3.4);
+
+insert into public.ingredient_dietary_tags (ingredient_id, tag_id) values
+  ((select id from public.ingredients where code = 'zz_test_milk'),
+   (select id from public.dietary_tags where code = 'milk'));
+
+insert into public.ingredient_allowed_units (ingredient_id, unit_id, is_default) values
+  ((select id from public.ingredients where code = 'zz_test_milk'),
+   (select id from public.units where code = 'ml'), true),
+  ((select id from public.ingredients where code = 'zz_test_milk'),
+   (select id from public.units where code = 'l'), false);
+
+insert into public.ingredient_seasonality (ingredient_id, region_id, month) values
+  ((select id from public.ingredients where code = 'zz_test_egg'),
+   (select id from public.regions where code = 'es'), 6);
+
+-- --- access control -------------------------------------------------
+
+select set_config('request.jwt.claims', json_build_object('sub','00000000-0000-0000-0000-0000000000b1','role','authenticated')::text, true);
+set local role authenticated;
+
+select ok((select count(*) from public.ingredients) = 2, 'authenticated can read ingredients');
+select ok(
+  (select count(*) from public.ingredient_translations)
+  + (select count(*) from public.ingredient_nutrients)
+  + (select count(*) from public.ingredient_dietary_tags)
+  + (select count(*) from public.ingredient_allowed_units)
+  + (select count(*) from public.ingredient_seasonality) = 7,
+  'authenticated can read every ingredient companion table'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredients (code, food_group_id, nutrition_basis)
+     values ('zz_nope', (select id from public.food_groups where code = 'frutas'), 'per_100g') $q$,
+  '42501', null, 'authenticated cannot insert an ingredient'
+);
+select throws_ok(
+  $q$ insert into public.ingredient_translations (ingredient_id, locale, name)
+     values ((select id from public.ingredients where code = 'zz_test_milk'), 'en', 'Nope') $q$,
+  '42501', null, 'authenticated cannot insert an ingredient translation'
+);
+select throws_ok(
+  $q$ insert into public.ingredient_nutrients (ingredient_id, nutrient_id, amount)
+     values ((select id from public.ingredients where code = 'zz_test_milk'),
+             (select id from public.nutrients where code = 'fat'), 1) $q$,
+  '42501', null, 'authenticated cannot insert an ingredient nutrient'
+);
+select throws_ok(
+  $q$ insert into public.ingredient_dietary_tags (ingredient_id, tag_id)
+     values ((select id from public.ingredients where code = 'zz_test_egg'),
+             (select id from public.dietary_tags where code = 'eggs')) $q$,
+  '42501', null, 'authenticated cannot insert an ingredient dietary tag'
+);
+select throws_ok(
+  $q$ insert into public.ingredient_allowed_units (ingredient_id, unit_id)
+     values ((select id from public.ingredients where code = 'zz_test_egg'),
+             (select id from public.units where code = 'unit')) $q$,
+  '42501', null, 'authenticated cannot insert an ingredient allowed unit'
+);
+select throws_ok(
+  $q$ insert into public.ingredient_seasonality (ingredient_id, region_id, month)
+     values ((select id from public.ingredients where code = 'zz_test_milk'),
+             (select id from public.regions where code = 'es'), 3) $q$,
+  '42501', null, 'authenticated cannot insert ingredient seasonality'
+);
+
+update public.ingredients set code = 'hijacked' where code = 'zz_test_milk';
+select is(
+  (select count(*) from public.ingredients where code = 'zz_test_milk'),
+  1::bigint,
+  'an authenticated UPDATE of an ingredient changes nothing (no policy matches)'
+);
+
+delete from public.ingredients where code = 'zz_test_egg';
+select is(
+  (select count(*) from public.ingredients),
+  2::bigint,
+  'an authenticated DELETE of an ingredient removes nothing (no policy matches)'
+);
+
+reset role;
+select set_config('request.jwt.claims', '', true);
+set local role anon;
+select is((select count(*) from public.ingredients), 0::bigint, 'anon sees no ingredients');
+reset role;
+
+-- --- constraints ----------------------------------------------------
+
+select throws_ok(
+  $q$ insert into public.ingredients (code, food_group_id, nutrition_basis)
+     values ('zz_bad_basis', (select id from public.food_groups where code = 'frutas'), 'per_serving') $q$,
+  '23514', null, 'an ingredient with an unknown nutrition_basis is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredients (code, food_group_id, nutrition_basis, density_g_per_ml)
+     values ('zz_bad_density', (select id from public.food_groups where code = 'frutas'), 'per_100ml', 0) $q$,
+  '23514', null, 'a non-positive density_g_per_ml is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredients (code, food_group_id, nutrition_basis, grams_per_unit)
+     values ('zz_bad_gpu', (select id from public.food_groups where code = 'frutas'), 'per_100g', -1) $q$,
+  '23514', null, 'a non-positive grams_per_unit is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredient_translations (ingredient_id, locale, name)
+     values ((select id from public.ingredients where code = 'zz_test_egg'), 'en', '   ') $q$,
+  '23514', null, 'a blank ingredient name is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredient_translations (ingredient_id, locale, name)
+     values ((select id from public.ingredients where code = 'zz_test_milk'), 'es', 'Otra') $q$,
+  '23505', null, 'a second translation for the same ingredient and locale is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredient_translations (ingredient_id, locale, name)
+     values ((select id from public.ingredients where code = 'zz_test_egg'), 'es', 'zz leche') $q$,
+  '23505', null, 'two ingredients cannot share a name in one locale, case-insensitively'
+);
+
+select lives_ok(
+  $q$ insert into public.ingredient_translations (ingredient_id, locale, name)
+     values ((select id from public.ingredients where code = 'zz_test_milk'), 'en', 'ZZ Leche') $q$,
+  'the same name in two different locales is allowed'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredient_nutrients (ingredient_id, nutrient_id, amount)
+     values ((select id from public.ingredients where code = 'zz_test_milk'),
+             (select id from public.nutrients where code = 'fat'), -0.1) $q$,
+  '23514', null, 'a negative nutrient amount is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredient_allowed_units (ingredient_id, unit_id, is_default)
+     values ((select id from public.ingredients where code = 'zz_test_milk'),
+             (select id from public.units where code = 'tbsp'), true) $q$,
+  '23505', null, 'a second default unit for one ingredient is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredient_seasonality (ingredient_id, region_id, month)
+     values ((select id from public.ingredients where code = 'zz_test_milk'),
+             (select id from public.regions where code = 'es'), 0) $q$,
+  '23514', null, 'a seasonality month of 0 is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredient_seasonality (ingredient_id, region_id, month)
+     values ((select id from public.ingredients where code = 'zz_test_milk'),
+             (select id from public.regions where code = 'es'), 13) $q$,
+  '23514', null, 'a seasonality month of 13 is rejected'
+);
+
+select throws_ok(
+  $q$ insert into public.ingredient_seasonality (ingredient_id, region_id, month)
+     values ((select id from public.ingredients where code = 'zz_test_egg'),
+             (select id from public.regions where code = 'es'), 6) $q$,
+  '23505', null, 'a duplicate ingredient/region/month seasonality row is rejected'
+);
+
+select lives_ok(
+  $q$ insert into public.ingredient_seasonality (ingredient_id, region_id, month)
+     values ((select id from public.ingredients where code = 'zz_test_egg'),
+             (select id from public.regions where code = 'zz_test_region'), 6) $q$,
+  'the same ingredient and month in a different region is allowed'
+);
+
+-- --- referential integrity ------------------------------------------
+
+select throws_ok(
+  $q$ delete from public.food_groups where code = 'lacteos' $q$,
+  '23503', null, 'a food group still referenced by an ingredient cannot be deleted'
+);
+
+select throws_ok(
+  $q$ delete from public.units where code = 'ml' $q$,
+  '23503', null, 'a unit still referenced by ingredient_allowed_units cannot be deleted'
+);
+
+select throws_ok(
+  $q$ delete from public.regions where code = 'es' $q$,
+  '23503', null, 'a region still referenced by ingredient_seasonality cannot be deleted'
+);
+
+select throws_ok(
+  $q$ delete from public.nutrients where code = 'protein' $q$,
+  '23503', null, 'a nutrient still referenced by ingredient_nutrients cannot be deleted'
+);
+
+select throws_ok(
+  $q$ delete from public.dietary_tags where code = 'milk' $q$,
+  '23503', null, 'a dietary tag still referenced by an ingredient cannot be deleted'
+);
+
+select throws_ok(
+  $q$ delete from public.locales where code = 'es' $q$,
+  '23503', null, 'a locale still referenced by an ingredient translation cannot be deleted'
+);
+
+-- Deleting the ingredient itself must take all five companion sets with
+-- it. Done last, since it destroys the fixtures above.
+delete from public.ingredients where code = 'zz_test_milk';
+select is(
+  (select count(*) from public.ingredient_translations   where ingredient_id not in (select id from public.ingredients))
+  + (select count(*) from public.ingredient_nutrients    where ingredient_id not in (select id from public.ingredients))
+  + (select count(*) from public.ingredient_dietary_tags where ingredient_id not in (select id from public.ingredients))
+  + (select count(*) from public.ingredient_allowed_units where ingredient_id not in (select id from public.ingredients))
+  + (select count(*) from public.ingredient_seasonality  where ingredient_id not in (select id from public.ingredients)),
+  0::bigint,
+  'deleting an ingredient cascades to all five companion tables'
 );
 
 select * from finish();

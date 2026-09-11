@@ -1,6 +1,16 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 
+/**
+ * Runs before every non-static request (see `config.matcher` below).
+ * Refreshes the Supabase auth session cookie so it never silently expires
+ * mid-visit - this is what lets Server Components/Actions elsewhere just
+ * read the session without each one re-checking or refreshing it. Passes
+ * requests through untouched if Supabase env vars aren't configured for
+ * this environment (e.g. prod, before `la-bonavida-prod` exists).
+ * @param request The incoming Next.js request.
+ * @returns A `Promise` resolving to the (possibly cookie-updated) response.
+ */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({
     request: {

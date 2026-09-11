@@ -34,7 +34,12 @@ insert into public.profiles (id, alias) values
   ('00000000-0000-0000-0000-0000000000a4', 'Stranger D');
 -- deliberately no profiles row for a5
 
-insert into public.households (id, name) overriding system value values (900001, 'Test Household');
+-- region_id became not-null in Phase 2 (20260911120000_phase2_reference_data.sql)
+-- and has no column default, since a DEFAULT cannot be a subquery - so every
+-- direct household insert must now resolve the default region itself, exactly
+-- as create_household() does.
+insert into public.households (id, name, region_id) overriding system value
+  values (900001, 'Test Household', (select id from public.regions where is_default));
 insert into public.household_members (household_id, user_id, role) values
   (900001, '00000000-0000-0000-0000-0000000000a1', 'owner'),
   (900001, '00000000-0000-0000-0000-0000000000a3', 'member');
@@ -143,7 +148,8 @@ select is(
 
 -- === Rate limits ===
 
-insert into households (id, name) overriding system value values (900002, 'Rate Limit Household');
+insert into households (id, name, region_id) overriding system value
+  values (900002, 'Rate Limit Household', (select id from public.regions where is_default));
 insert into household_members (household_id, user_id, role) values (900002, '00000000-0000-0000-0000-0000000000a1', 'owner');
 
 select set_config('request.jwt.claims', json_build_object('sub','00000000-0000-0000-0000-0000000000a1','role','authenticated')::text, true);
@@ -165,7 +171,10 @@ reset role;
 -- Person-level cap: spread invites across three other households (each
 -- under its own 5/day cap) so the 11th invite fails specifically on the
 -- person cap, not the household cap.
-insert into households (id, name) overriding system value values (900003, 'H3'), (900004, 'H4'), (900005, 'H5');
+insert into households (id, name, region_id) overriding system value values
+  (900003, 'H3', (select id from public.regions where is_default)),
+  (900004, 'H4', (select id from public.regions where is_default)),
+  (900005, 'H5', (select id from public.regions where is_default));
 insert into household_members (household_id, user_id, role) values
   (900003, '00000000-0000-0000-0000-0000000000a1', 'owner'),
   (900004, '00000000-0000-0000-0000-0000000000a1', 'owner'),

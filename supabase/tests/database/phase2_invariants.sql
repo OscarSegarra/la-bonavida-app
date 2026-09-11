@@ -642,7 +642,7 @@ select throws_ok(
     "names":{"es":"X"},"nutrients":{},"dietary_tags":[],
     "units":{"allowed":["g"],"default":"g"}
   }'::jsonb) $q$,
-  'an unknown food group is rejected by name'
+  'P0001', null, 'an unknown food group is rejected by name'
 );
 select throws_ok(
   $q$ select public.upsert_ingredient('{
@@ -650,7 +650,7 @@ select throws_ok(
     "names":{"es":"X"},"nutrients":{"not_a_nutrient":1},"dietary_tags":[],
     "units":{"allowed":["g"],"default":"g"}
   }'::jsonb) $q$,
-  'an unknown nutrient code is rejected rather than dropped'
+  'P0001', null, 'an unknown nutrient code is rejected rather than dropped'
 );
 select throws_ok(
   $q$ select public.upsert_ingredient('{
@@ -658,7 +658,7 @@ select throws_ok(
     "names":{"es":"X"},"nutrients":{},"dietary_tags":["not_a_tag"],
     "units":{"allowed":["g"],"default":"g"}
   }'::jsonb) $q$,
-  'an unknown dietary tag is rejected rather than dropped'
+  'P0001', null, 'an unknown dietary tag is rejected rather than dropped'
 );
 
 -- "The default unit must be one of the allowed units" is a cross-column
@@ -669,7 +669,7 @@ select throws_ok(
     "names":{"es":"X"},"nutrients":{},"dietary_tags":[],
     "units":{"allowed":["g"],"default":"kg"}
   }'::jsonb) $q$,
-  'a default unit outside the allowed list is rejected'
+  'P0001', null, 'a default unit outside the allowed list is rejected'
 );
 select throws_ok(
   $q$ select public.upsert_ingredient('{
@@ -677,7 +677,7 @@ select throws_ok(
     "names":{"es":"X"},"nutrients":{},"dietary_tags":[],
     "units":{"allowed":[],"default":"g"}
   }'::jsonb) $q$,
-  'an ingredient with no allowed units is rejected'
+  'P0001', null, 'an ingredient with no allowed units is rejected'
 );
 
 -- Nothing survives a rejected call.
@@ -706,7 +706,7 @@ select throws_ok(
     "names":{"es":"ZZ Reemplazada"},"nutrients":{"not_a_nutrient":1},
     "dietary_tags":["vegetarian"],"units":{"allowed":["g"],"default":"g"}
   }'::jsonb) $q$,
-  'a re-seed carrying bad data is rejected'
+  'P0001', null, 'a re-seed carrying bad data is rejected'
 );
 
 select is(

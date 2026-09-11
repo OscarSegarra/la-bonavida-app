@@ -1,3 +1,18 @@
+# Which dependencies may run install-time build scripts.
+#
+# pnpm denies these by default, because a build script is arbitrary code
+# executing at install time - the main supply-chain attack surface in a
+# JavaScript project. Every entry here is a deliberate decision, and pnpm
+# fails the install rather than let one be made silently (which is how CI
+# caught this: locally the same situation is only a warning).
+#
+# @parcel/watcher and @swc/core arrived transitively with next-intl. Both
+# ship prebuilt native binaries and their build scripts are a fallback for
+# platforms without one, so denying them costs nothing here: typecheck,
+# lint, tests and the production build all pass with them unbuilt. Flip one
+# to true only if a real build starts failing without it.
 allowBuilds:
+  '@parcel/watcher': false
+  '@swc/core': false
   sharp: false
   unrs-resolver: false

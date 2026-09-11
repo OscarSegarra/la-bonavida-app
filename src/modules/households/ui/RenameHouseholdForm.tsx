@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
+import { useTranslations } from "next-intl";
+import { useActionError } from "./useActionError";
 import { submitRenameHousehold } from "../domain/actions";
 
 export function RenameHouseholdForm({
@@ -10,14 +12,17 @@ export function RenameHouseholdForm({
   householdId: number;
   currentName: string;
 }) {
+  const t = useTranslations("RenameHousehold");
+  const tCommon = useTranslations("Common");
   const action = submitRenameHousehold.bind(null, householdId);
   const [state, formAction, pending] = useActionState(action, {});
+  const actionError = useActionError(state);
 
   return (
     <form action={formAction} className="flex w-full max-w-sm items-end gap-2">
       <label className="flex flex-1 flex-col gap-1 text-sm">
         <span className="font-medium text-black dark:text-zinc-50">
-          Household name
+          {t("label")}
         </span>
         <input
           name="name"
@@ -32,10 +37,10 @@ export function RenameHouseholdForm({
         disabled={pending}
         className="rounded-md border border-black/10 px-3 py-2 text-sm disabled:opacity-50 dark:border-white/10"
       >
-        {pending ? "Saving…" : "Rename"}
+        {pending ? tCommon("saving") : t("submit")}
       </button>
-      {state.error && (
-        <p className="text-sm text-red-600 dark:text-red-400">{state.error}</p>
+      {actionError && (
+        <p className="text-sm text-red-600 dark:text-red-400">{actionError}</p>
       )}
     </form>
   );

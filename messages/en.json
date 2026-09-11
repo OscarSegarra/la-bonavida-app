@@ -1,0 +1,94 @@
+{
+  "Common": {
+    "back": "← Back",
+    "saving": "Saving…",
+    "errorTitle": "Something went wrong",
+    "errorFallback": "An unexpected error occurred.",
+    "tryAgain": "Try again"
+  },
+  "Roles": {
+    "owner": "owner",
+    "member": "member"
+  },
+  "LocaleSwitcher": {
+    "label": "Language"
+  },
+  "Login": {
+    "title": "Sign in to La BonaVida",
+    "email": "Email",
+    "send": "Send magic link",
+    "sending": "Sending…",
+    "checkEmail": "Check your email for a sign-in link."
+  },
+  "Alias": {
+    "label": "What should we call you?",
+    "save": "Save",
+    "continue": "Continue"
+  },
+  "CreateHousehold": {
+    "label": "Household name",
+    "placeholder": "e.g. The Segarra House",
+    "submit": "Create household",
+    "pending": "Creating…"
+  },
+  "RenameHousehold": {
+    "label": "Household name",
+    "submit": "Rename"
+  },
+  "HouseholdPage": {
+    "settings": "Settings",
+    "members": "Members"
+  },
+  "Settings": {
+    "title": "{name} — Settings",
+    "renameSection": "Rename household",
+    "membersSection": "Members",
+    "yourNameSection": "Your name",
+    "inviteSection": "Invite someone",
+    "pendingInvites": "Pending invite links",
+    "dangerZone": "Danger zone",
+    "soleOwnerCannotLeave": "You're the sole owner — promote another member to owner before you can leave.",
+    "leave": "Leave household",
+    "leaveConfirm": "Leave this household? You'll need a new invite to rejoin.",
+    "delete": "Delete household",
+    "deleteConfirm": "Delete this household permanently, for everyone? This can't be undone."
+  },
+  "Roster": {
+    "you": "(you)",
+    "soleOwnerNote": "Sole owner — promote someone else first",
+    "promote": "Promote",
+    "demote": "Demote",
+    "remove": "Remove"
+  },
+  "InviteGenerator": {
+    "asMember": "Member",
+    "asOwner": "Owner",
+    "generate": "Generate invite link",
+    "generating": "Generating…",
+    "expiryNote": "(expires in 7 days, single use)"
+  },
+  "InvitesList": {
+    "empty": "No pending invite links.",
+    "invitedBy": "{role} · invited by {alias}",
+    "revoke": "Revoke"
+  },
+  "InviteAccept": {
+    "invitation": "You've been invited to join {household} as {role}.",
+    "accept": "Accept",
+    "joining": "Joining…",
+    "decline": "Decline",
+    "invalid": "This invite link is invalid or has expired."
+  },
+  "Onboarding": {
+    "title": "Create your household"
+  },
+  "Validation": {
+    "aliasRequired": "Enter a name.",
+    "aliasTooLong": "Keep it under 60 characters.",
+    "householdNameRequired": "Enter a household name.",
+    "householdNameTooLong": "Keep it under 100 characters.",
+    "invalidRole": "Invalid role.",
+    "emailRequired": "Enter your email.",
+    "serverMisconfigured": "The server is not configured correctly. Please contact the administrator."
+  }
+}

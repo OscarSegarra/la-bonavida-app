@@ -1606,3 +1606,55 @@ end-to-end, since this environment has no email inbox. See `PLAN.md`'s
 Phase 2 status block.
 
 ---
+
+## 2026-09-12 — The `main` cutover stays deferred, now for a tested reason
+rather than an assumed one
+
+**Context:** with Phase 2 merged to `develop`, the natural next step
+looked like merging `develop` into `main`. `main` was 33 commits behind,
+still sitting at the Phase 0 scaffold.
+
+**What stopped it:** `main` deploys to Vercel Production, and Production
+has no database. `la-bonavida-prod` does not exist, so the deploy would
+either 500 on every route (env vars unset — `proxy.ts` survives that, but
+every page calls `createClient()`, which does not) or, if pointed at
+preprod, would have production reading and writing the development
+database. The second is worse than the first.
+
+**Creating the prod project was attempted and refused**, which turns a
+previously-assumed constraint into a verified one:
+
+> The following organization members have reached their maximum limits
+> for the number of active free projects […] OscarSegarra (2 project
+> limit).
+
+The two active slots are `la-bonavida-preprod` and `La BonaVida APP` —
+the old backend still serving real users. `labonavida-staging` is already
+paused, so it occupies no slot and deleting it would free nothing. Cost
+was quoted at $0/month, so this is a capacity limit, not a pricing one.
+
+**Decision:** hold the `main` merge; keep shipping on `develop`.
+
+**Alternatives considered:**
+- *Retire or pause the old live app* to free a slot — rejected. It frees
+  the slot immediately but breaks an app people are using, and the
+  replacement is at Phase 2 of 7: no recipes, meal plans or shopping
+  lists. The old app cannot be retired until the new one can do its job.
+- *Upgrade to Pro* — rejected for now. Real recurring cost for a
+  production environment with no users.
+- *Merge anyway and accept a broken Production deploy* — defensible,
+  since nothing points at that URL yet, but it buys only the appearance
+  of currency on `main` and costs a deploy that fails in public.
+
+**Why this is not drift:** the original deferral said to revisit "when
+ready to actually launch", and finishing Phase 2 does not make the app
+ready to launch. The reasoning that deferred it is unchanged; only its
+evidence improved. `CLAUDE.md` now says explicitly that `main` is stale
+on purpose, so a future session doesn't "tidy it up".
+
+**One thing that will need a person either way:** the Vercel project
+config is not readable from this session (403), so the Production
+environment variables have to be set by hand whenever the cutover
+happens, regardless of which path is taken to a prod database.
+
+---

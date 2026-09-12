@@ -194,6 +194,12 @@ Proton is Oscar's personal/admin inbox — it will never send app email.
 
 - `la-bonavida-prod` Supabase project: not created yet (free-tier project
   cap — see `DECISIONS.md`). Create it when ready to actually launch.
+- **`main` is deliberately stale.** It sits at the Phase 0 scaffold while
+  `develop` carries everything built since. That is not neglect: merging
+  to `main` deploys to Vercel Production, which has no database to talk
+  to until `la-bonavida-prod` exists. Don't "tidy this up" by merging —
+  the cutover is a launch decision, and every PR already gets a preview
+  deployment against preprod, so nothing is blocked by waiting.
 - Old GitHub repo (`OscarSegarra/Food-scheduler`) and old Vercel
   project/Supabase projects (`La BonaVida APP`, `labonavida-staging`) are
   from an earlier attempt at this project — left running/paused

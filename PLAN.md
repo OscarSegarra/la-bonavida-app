@@ -11,7 +11,9 @@ before we start building features.
 - [x] CI (type-check, lint, test)
 - [x] Branch protection on `main`/`develop`
 - [x] Vercel project + environments
-- [ ] `la-bonavida-prod` Supabase project (deferred until launch-ready)
+- [ ] `la-bonavida-prod` Supabase project — attempted 2026-09-12 and
+      blocked by the free tier's 2-active-project limit; still deferred
+      until launch-ready. See `DECISIONS.md`.
 
 ## Phase 1 — Auth & households
 

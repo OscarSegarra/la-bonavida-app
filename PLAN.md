@@ -93,6 +93,28 @@ reasoning) — this replaces the original bullet list:
 
 ## Phase 2 — Ingredients
 
+**Status: built**, merged to `develop` across five PRs (#5 reference
+schema, #6 ingredient schema, #8 i18n, #9 seed pipeline, #10 browse UI).
+Migrations applied to preprod; typecheck, lint, 40 unit tests, 109 pgTAP
+assertions and the production build all pass. Three gaps at merge time,
+flagged rather than quietly assumed fine:
+
+- **The seed dataset is 62 ingredients, not the 150–250 targeted.** All
+  13 food groups are covered and every entry carries the seven EU
+  mandatory declarations, so the pipeline and the data shape are proven;
+  reaching the target is continued curation on working, re-runnable
+  infrastructure rather than new engineering.
+- **The full seed has not been applied to preprod.** A representative
+  8-ingredient subset is loaded — chosen to exercise count units,
+  density, wraparound seasonality, allergens and per-100 ml. Applying the
+  rest needs `SUPABASE_SERVICE_ROLE_KEY` set locally, then
+  `pnpm run seed:ingredients`.
+- **Verification used a temporary password user**, since this environment
+  has no email inbox for the magic-link flow. Pages were rendered in all
+  three locales against preprod and the user was removed afterwards, but
+  a real magic-link click-through is still unverified — the same gap
+  Phase 1 recorded.
+
 **Detailed build spec: `PHASE_2_PLAN.md`** — schema, module layout,
 build sequence, and the testing bar to clear before this phase is done.
 The bullets below stay the roadmap-level summary.
@@ -102,10 +124,12 @@ The bullets below stay the roadmap-level summary.
   rule; see `DECISIONS.md`.
 - **Admin-curated, not user-writable.** Authenticated users get read-only
   access (browse/search); no household can insert, edit, or delete a
-  catalog entry. New ingredients are added directly by the project owner
-  (Supabase Studio — no in-app admin tooling needed at this scale). Since
-  there's no user-write path, there's no duplicate/moderation/abuse
-  problem to design around at all. See `DECISIONS.md`.
+  catalog entry. The catalog's only write path is the
+  `upsert_ingredient` database function, called by
+  `pnpm run seed:ingredients` under the service role — `EXECUTE` on it is
+  revoked from `anon` and `authenticated`. Since there's no user-write
+  path, there's no duplicate/moderation/abuse problem to design around at
+  all. See `DECISIONS.md`.
 - **Nutrition values:** the full EU-standard set (Regulation 1169/2011
   Annex XIII — 7 mandatory macros, 5 voluntary macros, ~13 vitamins, ~14
   minerals), stored **normalized**: a seeded `nutrients` reference table

@@ -1545,3 +1545,64 @@ rule; and a covering index was dropped as unearned optimisation on a
 few-thousand-row table.
 
 ---
+
+## 2026-09-12 — Phase 2 as built: what the plan got right, and what only
+building it revealed
+
+**Context:** Phase 2 shipped across five PRs. The plan held up well enough
+that this entry is mostly about the gap between planning and building,
+which is the part worth keeping.
+
+**The plan's own review paid for itself.** The pre-build defect pass
+caught that the seed importer's headline requirement — "each ingredient
+written in a single transaction" — was *unimplementable* as specified,
+because PostgREST gives every call its own transaction. Had that reached
+the build, the likely outcome was a non-atomic importer that looked like
+it satisfied the plan. Reviewing a plan for buildability, not just
+soundness, is cheaper than discovering it mid-slice.
+
+**Three bugs were found by running things rather than reading them**, and
+all three were invisible to typecheck, lint and unit tests:
+- An ambiguous column reference in `upsert_ingredient`'s units join,
+  caught on the function's very first real call.
+- A missing duplicate-name check in the importer. The database enforces
+  unique names per locale, so a collision would have surfaced part-way
+  through a run, after earlier entries had already been written.
+- `"1 ingredientes"` — no pluralisation — visible only once real data was
+  rendered. Fixed with ICU plurals.
+
+This is the argument for the browser-verification step in the testing
+bar, restated with evidence: every automated gate was green while the
+list was rendering incorrect Spanish.
+
+**A fourth, in the tests themselves:** six pgTAP assertions used the
+two-argument `throws_ok(sql, text)`, which treats its second argument as
+the *expected error message* rather than a description — so they compared
+raised errors against their own prose. Worth remembering, because such a
+test fails loudly here but could just as easily pass for the wrong reason
+elsewhere.
+
+**The same lesson surfaced a third time.** A multi-row write that must be
+all-or-nothing belongs in one Postgres function, not a sequence of client
+calls: `create_household` (Phase 1, shipped broken), the seed importer's
+delete-then-insert path (caught by tracing the knowledge graph), and the
+transaction mechanism itself. Three different routes to one conclusion.
+
+**Two decisions that are worth re-reading when Phase 3 starts:**
+- `upsert_ingredient` is `SECURITY INVOKER`, deliberately unlike
+  `create_household`. Only the seed script calls it, under a service role
+  that already bypasses RLS, so elevation would add nothing but blast
+  radius. The distinction matters: "it's a SECURITY DEFINER project" is
+  not a convention, it is a per-function judgement.
+- The region form performs no permission check of its own, because the
+  owner-only `households_update` policy already refuses it. Restating an
+  RLS rule in application code creates a second, weaker copy — one that
+  can be bypassed — and two places to keep in sync.
+
+**Known limitations recorded rather than resolved:** the seed dataset is
+62 ingredients against a 150–250 target; only a representative subset is
+loaded into preprod; and the magic-link flow is still unverified
+end-to-end, since this environment has no email inbox. See `PLAN.md`'s
+Phase 2 status block.
+
+---

@@ -2296,3 +2296,61 @@ explanation reads as broken rather than deliberate.
 and the user review found absences — features that were never wrong
 because they were never written down. Neither pass would have found the
 other's list.
+
+---
+
+## 2026-09-12 — Recipe sizes are computed and filtered, never rounded
+
+**Context:** scaling a recipe by an arbitrary factor produces half an egg,
+and no rounding rule fixes that — rounding 1.5 up to 2 changes the recipe,
+and printing "1,5 huevos" reads like software output rather than cooking.
+This was left as an accepted wrinkle, and it was the wrinkle that kept
+bothering the user, correctly.
+
+**Two observations narrowed it.** The problem only exists for **count**
+units — 75 g is 75 g at any factor. And divisibility is a property of the
+**ingredient**, not a universal rule: half an apple, half an onion and
+half a lemon are all real things a person uses, while half an egg, half a
+bay leaf and half a stock cube are not.
+
+**Decision: the quantities are never adjusted to fit the sizes; the sizes
+are filtered to fit the quantities.** A serving count is offered only when
+every line comes out usable at that factor — mass and volume always do,
+a divisible count line may come out fractional, an indivisible one must
+come out whole, and nothing below `min_servings` is offered whatever the
+arithmetic says. A new `ingredients.count_divisible` boolean, required
+exactly where a count unit is allowed and null otherwise, carries the
+judgement, enforced by the same conditional-constraint pair as the
+conversion factors rather than a second mechanism.
+
+A tortilla for 4 with 4 eggs, 1 onion and 300 g of potato offers 2, 4 and
+8. The same recipe with a *single* egg does not offer 2 — because it
+genuinely cannot be made for two without half an egg, and declining is
+more honest than showing 0.5.
+
+**The alternative the user proposed, and why it lost:** hand-written
+variants — a curated ingredient list per size, 2/4/8. It delivers an
+identical experience and is easier to *build*, since there is no filter
+and no arithmetic. It was rejected on **maintenance**: a hundred recipes
+becomes three hundred hand-written ingredient lists, correcting a quantity
+in the 4-person version means remembering the other two, and N copies that
+can silently drift is the shape this project already rejected for
+column-per-locale and for wide nutrition tables. It also multiplies the
+curation cost per recipe at exactly the moment the bottleneck is how many
+recipes exist at all.
+
+**What that costs, and the honest answer to it:** scaling is linear and
+cooking is not — a paella for eight wants a wider pan and different
+timing, and arithmetic cannot say so, while a hand-written variant could.
+The resolution is that a genuinely different method is a genuinely
+different *recipe*, which the catalog already supports with no new
+concept. Linking related recipes is the same shape as the deferred
+ingredient substitutes/subtypes relationship and can be designed with it.
+Hand-written variants stay available as a later child table if the linear
+assumption proves wrong in practice; nothing here forecloses them.
+
+**A pleasant consequence:** with no rounding step there is no rounding
+rule, no "of 1,5" caveat in the UI, and no case where a scaled recipe's
+quantities disagree with its nutrition. The earlier `count_divisible`
+proposal existed to *round better*; this one uses the same single column
+to make rounding unnecessary.

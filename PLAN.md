@@ -270,10 +270,13 @@ reasoning is in `DECISIONS.md`, in the entries dated 2026-09-12.
   they are not deferred with the nutrition totals.
 - **Browsing works the way a cook expects.** Search by name *and by
   ingredient* ("what can I make with chicken"); filter by tag, allergen
-  and diet; scale a recipe to a different number of people, floored by a
-  per-recipe `min_servings` because a pie for one is not a thing; ticked
-  steps survive a reload; ingredient and sub-recipe lines both link
-  through to their own pages. Single-ingredient entries like "an apple"
+  and diet; pick from a short list of **offered** serving sizes — computed
+  from one set of quantities, then filtered so a size is only offered when
+  every line comes out usable, which is what stops half an egg ever
+  appearing (a new per-ingredient `count_divisible` says whether half of
+  one is a real thing), and floored by a per-recipe `min_servings` because
+  a pie for one is not a thing; ticked steps survive a reload; ingredient
+  and sub-recipe lines both link through to their own pages. Single-ingredient entries like "an apple"
   are hidden from the main list by default — derived as "one line, no
   steps" rather than tagged — and still reachable by search and usable in
   meal plans.

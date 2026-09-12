@@ -38,7 +38,9 @@ tested. Every reversal that follows from that is recorded in
   are Phase 3b, gated on the catalog staying small until they exist.
 - **Retirement, not deletion**, matching the ingredient catalog.
 - Browse, search (by name **and by ingredient**) and detail UI in all
-  three locales, with scaling to a different number of servings.
+  three locales, with a recipe scalable to a short list of **offered**
+  serving sizes — computed, filtered so nothing ever comes out as half an
+  egg, and never rounded.
 
 **Deliberately not in Phase 3** (§11 has the full list): user-written
 recipes — the ownership columns land now, the feature does not —
@@ -253,7 +255,7 @@ stale. That is the intended behaviour: an override represents a
 measurement of the finished dish, which does not become wrong because a
 reference table was edited.
 
-### 2.6 One change to an existing table: ingredient convertibility
+### 2.6 Two changes to an existing table: convertibility and divisibility
 
 Phase 2 left `ingredients.density_g_per_ml` and
 `ingredients.grams_per_unit` nullable and unused, because nothing computed
@@ -290,6 +292,30 @@ the current catalog violates the rule.
 This asks for a number only where a number genuinely exists, and it gives
 the guarantee that actually matters: **no recipe line can be written whose
 nutrition cannot be computed.**
+
+**The second change is one boolean**, and it exists so that scaling a
+recipe never produces half an egg:
+
+```sql
+alter table public.ingredients
+  add column count_divisible boolean null;
+```
+
+`true` means a fraction of one is a real thing a person can use — half an
+apple, half an onion, half a lemon, half a pepper. `false` means it only
+makes sense whole: an egg, a bay leaf, a stock cube, a tin. It is
+**required exactly where a count unit is allowed** and must stay null
+otherwise, which is the same conditional shape as the conversion factors
+above and is enforced by the same pair of triggers rather than a second
+mechanism. Asking whether an onion is divisible is meaningless for olive
+oil, and a `not null default` would answer the question for ingredients
+nobody ever counts.
+
+It is gathered **now, during curation**, even though only the scaling UI
+reads it — the Phase 2 precedent for `density_g_per_ml` and
+`grams_per_unit`, and for the same reason: deciding it while already
+looking at the ingredient is free, and revisiting the whole catalog later
+is a second research pass. What it drives is in §6.1.
 
 ### 2.7 Indexes
 
@@ -522,12 +548,12 @@ ingredients, with an asymmetry that is easy to get backwards:
 src/modules/recipes/
   data/recipes.ts     listRecipes, getRecipe(code), searchRecipes (name + ingredient)
   data/nutrition.ts   one rpc() call per recipe                      [3b]
-  domain/scaling.ts   line quantities for a target serving count
+  domain/scaling.ts   offeredSizes(recipe) + scaled line quantities
   domain/search.ts    matching over already-fetched rows
   domain/basics.ts    isBasic(recipe): one line, no steps
   ui/RecipeList.tsx   list + filters, basics hidden by default (server)
   ui/RecipeSteps.tsx  the tickable step list, localStorage-backed ('use client')
-  ui/ServingsPicker.tsx  scale control, floored at min_servings ('use client')
+  ui/ServingsPicker.tsx  the offered sizes, nothing else selectable ('use client')
   ui/RecipeLines.tsx  ingredient / sub-recipe lines, both linked (server)
   index.ts            the only file anything outside the module may import
 ```
@@ -598,11 +624,9 @@ accent-folding helper.
 - **The yield is not shown.** `yield_quantity` is plumbing for sub-recipe
   arithmetic; "Serves 4" and "Yield 750 g" side by side only invites the
   question of which one matters.
-- **Servings are scalable**, down to `min_servings` and no further. Line
-  quantities are multiplied by `target / servings` — pure presentation
-  arithmetic on already-fetched rows, so it belongs in
-  `domain/scaling.ts` with a unit test, not in SQL. Scaled amounts are
-  rounded for display only; the underlying numbers are untouched.
+- **Servings are chosen from a short list of offered sizes**, not typed
+  freely — "2 / 4 / 8", the way a person thinks about it. See §6.2 for how
+  the list is built and why nothing is ever rounded.
 - **Steps are ticked off, and the ticks survive a reload** via
   `localStorage` keyed by recipe. The scenario this feature exists for is
   cooking with a phone on the counter, where the screen sleeps and the
@@ -615,6 +639,59 @@ accent-folding helper.
 deliberate decision, and an app that simply has no "add" button reads as
 one that is broken or unfinished. A request flow joins the same deferred
 list as ingredient requests.
+
+### 6.2 Serving sizes: computed, filtered, never rounded
+
+A recipe is scaled by multiplying every line by `target / servings`. Done
+naively that produces 1.5 eggs, and no rounding rule fixes that — rounding
+to 2 changes the recipe, and printing 1,5 reads like software output
+rather than cooking.
+
+**So the quantities are never adjusted to fit the sizes; the sizes are
+filtered to fit the quantities.** A serving count is offered only if every
+line comes out usable at that factor:
+
+- **Mass and volume lines never object.** 75 g is 75 g; any factor works.
+- **A count line of a divisible ingredient** accepts a fraction — half an
+  onion is a real thing.
+- **A count line of an indivisible ingredient** must come out whole. Two
+  eggs halve to one; one egg does not halve at all.
+- **Nothing below `min_servings`**, whatever the arithmetic says — a pie
+  for one fails for a reason that has nothing to do with divisibility.
+
+Worked through: a tortilla serving 4, with 4 eggs (indivisible), 1 onion
+(divisible) and 300 g of potato, offers **2** (2 eggs, ½ cebolla, 150 g),
+**4** and **8**. A recipe using a single egg for 4 people simply does not
+offer 2, because it genuinely cannot be made for two without half an egg,
+and declining is more honest than displaying 0.5.
+
+The candidate factors are the small, human ones — ×½, ×1, ×1½, ×2, ×3 —
+filtered by the rules above. Every number a cook ever sees is exact.
+
+**Why computed rather than hand-written variants.** Writing a separate
+ingredient list per size was the alternative, and it delivers the same
+experience — a picker with 2, 4 and 8 on it. It was rejected on
+maintenance: a hundred recipes becomes three hundred hand-written
+ingredient lists, and correcting a quantity in the 4-person version means
+remembering the 2- and the 8-. N copies that can silently drift is the
+shape this project already rejected for column-per-locale and for wide
+nutrition tables, and it multiplies the curation cost per recipe at
+exactly the moment the bottleneck is how many recipes exist at all.
+
+**What that costs, stated plainly:** scaling is linear and cooking is not.
+A paella for eight wants a wider pan and different timing, and arithmetic
+cannot say so. The answer is that a genuinely different method is a
+genuinely different recipe — "Paella para 8" as its own entry, with its
+own steps — which the catalog already supports without any new concept.
+Linking related recipes is the same shape as the deferred ingredient
+substitutes/subtypes relationship and can be designed with it, if it earns
+its place. Hand-written variants remain available as a later child table
+on `recipes` if this turns out to be wrong; nothing here forecloses them.
+
+This is also what retires the rounding problem entirely: with no rounding
+step, there is no per-ingredient rounding rule, no "of 1,5" caveat in the
+UI, and no case where a scaled recipe's quantities disagree with its
+nutrition.
 
 ---
 
@@ -766,6 +843,9 @@ Refusals to assert:
 - An `ingredient_allowed_units` row whose unit is not convertible to the
   ingredient's basis; nulling a factor that an existing allowed unit
   needs.
+- Allowing a count unit on an ingredient whose `count_divisible` is null;
+  nulling `count_divisible` while a count unit is allowed; setting
+  `count_divisible` on an ingredient that allows no count unit.
 
 Arithmetic assertions, against fixture recipes with hand-computed answers.
 **These land with Phase 3b**, alongside the function they test — except
@@ -805,10 +885,15 @@ arithmetic itself is SQL and is covered by pgTAP, not duplicated here.
 
 Three that earn their own cases:
 
-- **`domain/scaling.ts`** — scaling to a target serving count, including
-  the identity case (target equals `servings`), a non-integer result, and
-  a target below `min_servings`, which the function must refuse rather
-  than silently clamp.
+- **`domain/scaling.ts`** — the size filter is where the value is, so it
+  gets the cases: a recipe with 4 indivisible eggs offers 2 and 8; the
+  same recipe with **1** egg does not offer 2; a divisible count line
+  halves to a fraction and stays offered; a mass-only recipe offers every
+  candidate; `min_servings` removes a size the arithmetic would have
+  allowed; and the identity case (target equals `servings`) returns the
+  quantities untouched. Plus one assertion that no offered size ever
+  produces a fractional quantity of an indivisible ingredient — the
+  property the whole design exists to guarantee.
 - **`domain/basics.ts`** — one line and no steps is a basic; one line
   *with* steps is not; two lines and no steps is not.
 - **`min_servings`** as a pgTAP refusal too: a recipe declaring a floor
@@ -854,6 +939,11 @@ functions without a pinned `search_path` are exactly what it catches.
 - **A `max_servings` ceiling.** `min_servings` exists because a pie for
   one is not a thing; a paella for forty is the same argument in the other
   direction, and it is the same one-line addition when someone hits it.
+- **Hand-written serving variants.** Considered and rejected for now in
+  favour of computed sizes (§6.2), on maintenance grounds rather than
+  capability. A child table on `recipes` adds them later if the linear
+  assumption turns out to be wrong in practice; nothing in this phase
+  forecloses it.
 - **Shopping-list generation** (Phase 5) and **meal plans** (Phase 4),
   both of which consume this schema.
 - **Typo-tolerant search.** Same ceiling as Phase 2: matching happens in
@@ -867,11 +957,16 @@ functions without a pinned `search_path` are exactly what it catches.
 
 ## 12. Risks carried into this phase
 
-- **Scaling produces awkward numbers.** Four servings down to three turns
-  two eggs into 1.5, and no amount of rounding makes half an egg
-  cookable. `min_servings` removes the worst cases; the rest is displayed
-  as the number it is and left to the cook, because a recipe app that
-  quietly rounds 1.5 eggs to 2 has changed the recipe.
+- **Scaling offers fewer sizes than a user might expect**, and the reason
+  is invisible to them: a recipe using a single egg for four people cannot
+  be halved, so it offers no small size at all. That is correct and it
+  will still occasionally read as a missing option. The fix, if it ever
+  matters, is curation — write the small version as its own recipe.
+- **`count_divisible` is a judgement per ingredient**, and a wrong one is
+  quiet: marking eggs divisible would put half an egg back on screen, and
+  marking onions indivisible removes sizes that were fine. It is curated
+  data like every approximation in the catalog, and the seed validator is
+  where a missing one gets caught.
 - **`localStorage` can be absent or refused** — a private window, cleared
   site data. Every read and write is wrapped, and the step list renders
   correctly with no stored state at all; the ticks are a convenience, not

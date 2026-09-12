@@ -9,7 +9,9 @@ import {
   getRoster,
   getMyProfile,
   listPendingInvites,
+  listRegions,
   RenameHouseholdForm,
+  RegionForm,
   Roster,
   InviteGenerator,
   InvitesList,
@@ -63,9 +65,10 @@ export default async function HouseholdSettingsPage({
   if (!household || !myRole || !profile) notFound();
 
   const isOwner = myRole === "owner";
-  const [roster, pendingInvites, t, tCommon, tAlias] = await Promise.all([
+  const [roster, pendingInvites, regions, t, tCommon, tAlias] = await Promise.all([
     getRoster(supabase, householdId),
     isOwner ? listPendingInvites(supabase, householdId) : Promise.resolve([]),
+    isOwner ? listRegions(supabase) : Promise.resolve([]),
     getTranslations("Settings"),
     getTranslations("Common"),
     getTranslations("Alias"),
@@ -95,6 +98,22 @@ export default async function HouseholdSettingsPage({
             {t("renameSection")}
           </h2>
           <RenameHouseholdForm householdId={householdId} currentName={household.name} />
+        </section>
+      )}
+
+      {isOwner && (
+        <section className="flex flex-col gap-2">
+          <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+            {t("regionLabel")}
+          </h2>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {t("regionHelp")}
+          </p>
+          <RegionForm
+            householdId={householdId}
+            currentRegion={household.regions?.code ?? ""}
+            regions={regions}
+          />
         </section>
       )}
 

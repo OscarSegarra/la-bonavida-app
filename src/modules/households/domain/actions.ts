@@ -23,6 +23,7 @@ import {
   revokeInvite,
   acceptInvite,
 } from "../data/invites";
+import { setHouseholdRegion } from "../data/regions";
 
 /**
  * What a Server Action hands back to the form that called it.
@@ -307,4 +308,35 @@ export async function submitAcceptInvite(
   const result = await attempt(() => acceptInvite(supabase, token));
   if (!result.ok) return { error: result.error };
   redirect({ href: `/households/${result.value}`, locale: await getLocale() });
+}
+
+/**
+ * Server Action for changing a household's region (settings page).
+ * `householdId` is pre-bound via `.bind(null, householdId)`.
+ *
+ * Only owners can do this, but nothing here checks that: the owner-only
+ * `households_update` policy Phase 1 already built refuses it for anyone
+ * else, and a rejected update simply matches no rows. Re-stating the rule
+ * here would create a second place to keep in sync - and the weaker of
+ * the two, since application code can be bypassed and RLS cannot.
+ * @param householdId The household to update (bound, not form data).
+ * @param _prev Previous action state (unused; required by `useActionState`).
+ * @param formData Expects `region` (a region code).
+ * @returns `{ error }` if the update is rejected; otherwise `{}` after
+ * revalidating the settings page.
+ */
+export async function submitSetHouseholdRegion(
+  householdId: number,
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const region = String(formData.get("region") ?? "");
+  if (!region) return { errorKey: "invalidRole" };
+
+  const supabase = await createClient();
+  const result = await attempt(() => setHouseholdRegion(supabase, householdId, region));
+  if (!result.ok) return { error: result.error };
+
+  revalidatePath(`/households/${householdId}/settings`);
+  return {};
 }

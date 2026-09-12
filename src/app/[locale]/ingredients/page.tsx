@@ -5,6 +5,7 @@ import { routing } from "@/i18n/routing";
 import {
   listIngredients,
   listFoodGroups,
+  listDietaryTags,
   IngredientList,
   IngredientFilters,
 } from "@/modules/ingredients";
@@ -26,7 +27,7 @@ export default async function IngredientsPage({
   searchParams,
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{ q?: string; group?: string }>;
+  searchParams: Promise<{ q?: string; group?: string; diet?: string }>;
 }) {
   const { locale } = await params;
   const supabase = await createClient();
@@ -35,17 +36,24 @@ export default async function IngredientsPage({
   } = await supabase.auth.getUser();
   if (!user) redirect({ href: "/login", locale });
 
-  const { q, group } = await searchParams;
-  const [t, foodGroups, ingredients] = await Promise.all([
+  const { q, group, diet } = await searchParams;
+  const [t, foodGroups, dietaryTags, ingredients] = await Promise.all([
     getTranslations("Ingredients"),
     listFoodGroups(supabase),
+    listDietaryTags(supabase),
     listIngredients(supabase, {
       locale,
       defaultLocale: routing.defaultLocale,
       search: q,
       foodGroupCode: group,
+      dietaryTagCodes: diet ? [diet] : undefined,
     }),
   ]);
+
+  // Only diet tags are offered as a filter. Selecting an allergen almost
+  // always means "nothing containing this", the opposite of what this
+  // inclusive filter does - see listDietaryTags.
+  const dietTags = dietaryTags.filter((tag) => tag.category === "diet").map((tag) => tag.code);
 
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-6 px-6 py-16">
@@ -56,11 +64,17 @@ export default async function IngredientsPage({
         <LocaleSwitcher />
       </div>
 
-      <IngredientFilters foodGroups={foodGroups} search={q} foodGroup={group} />
+      <IngredientFilters
+        foodGroups={foodGroups}
+        dietTags={dietTags}
+        search={q}
+        foodGroup={group}
+        diet={diet}
+      />
 
       <IngredientList
         ingredients={ingredients}
-        hasFilters={Boolean(q?.trim() || group)}
+        hasFilters={Boolean(q?.trim() || group || diet)}
       />
     </div>
   );

@@ -3,8 +3,8 @@
 -- This file grows with the phase. It currently covers slice 1 (the global
 -- reference vocabularies and the household region setting) and slice 2
 -- (the ingredient catalog and its five companion tables) and slice 4 (the
--- upsert_ingredient write path). The seeded-data assertions land with the
--- dataset itself, which CI does not apply.
+-- upsert_ingredient write path), and closes with the seed-sanity
+-- invariants from plan section 8.1.
 --
 -- Run with the Supabase CLI (`supabase test db`) or pg_prove against any
 -- Postgres with this project's migrations applied. Self-contained and
@@ -23,7 +23,7 @@
 create extension if not exists pgtap;
 
 begin;
-select plan(84);
+select plan(90);
 
 -- Fixtures: an owner, a plain member, and a stranger, plus one household.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -335,7 +335,14 @@ insert into public.ingredient_allowed_units (ingredient_id, unit_id, is_default)
   ((select id from public.ingredients where code = 'zz_test_milk'),
    (select id from public.units where code = 'ml'), true),
   ((select id from public.ingredients where code = 'zz_test_milk'),
-   (select id from public.units where code = 'l'), false);
+   (select id from public.units where code = 'l'), false),
+  -- The egg fixture needs units too: the seed-sanity assertions at the end
+  -- of this file run over every ingredient present, so a deliberately
+  -- half-built fixture would fail them for the wrong reason.
+  ((select id from public.ingredients where code = 'zz_test_egg'),
+   (select id from public.units where code = 'unit'), true),
+  ((select id from public.ingredients where code = 'zz_test_egg'),
+   (select id from public.units where code = 'g'), false);
 
 insert into public.ingredient_seasonality (ingredient_id, region_id, month) values
   ((select id from public.ingredients where code = 'zz_test_egg'),
@@ -352,7 +359,7 @@ select ok(
   + (select count(*) from public.ingredient_nutrients)
   + (select count(*) from public.ingredient_dietary_tags)
   + (select count(*) from public.ingredient_allowed_units)
-  + (select count(*) from public.ingredient_seasonality) = 7,
+  + (select count(*) from public.ingredient_seasonality) = 9,
   'authenticated can read every ingredient companion table'
 );
 
@@ -715,6 +722,101 @@ select is(
     where i.code = 'zz_up_reseed' and t.locale = 'es'),
   'ZZ Buena',
   'a failed re-seed leaves the previous data intact rather than destroying it'
+);
+
+-- =====================================================================
+-- Seed sanity (plan §8.1, assertions 21-25).
+--
+-- These assert curation invariants the schema cannot express, over every
+-- ingredient present. What that means depends on where they run, and both
+-- are useful:
+--   * In CI the only ingredients are this file's own fixtures, so they
+--     verify the invariants hold for well-formed data.
+--   * Run against preprod or prod after seeding, they check the real
+--     catalog - which is the case they exist for.
+--
+-- They are a second line rather than the only one: the seed importer
+-- enforces the same rules client-side and refuses to write a dataset that
+-- breaks them, so a curation mistake is normally caught before it reaches
+-- any database. These catch anything written by another route.
+--
+-- Placed last on purpose - earlier tests deliberately add and remove rows,
+-- so this is the first point where the data is settled.
+-- =====================================================================
+
+select is(
+  (select count(*) from public.ingredients i
+    where not exists (
+      select 1 from public.ingredient_translations t
+       where t.ingredient_id = i.id
+         and t.locale = (select code from public.locales where is_default)
+    )),
+  0::bigint,
+  'every ingredient has a name in the default locale'
+);
+
+select is(
+  (select count(*) from public.ingredients i
+    where not exists (
+      select 1 from public.ingredient_allowed_units u where u.ingredient_id = i.id
+    )),
+  0::bigint,
+  'every ingredient has at least one allowed unit'
+);
+
+select is(
+  (select count(*) from public.ingredients i
+    where (select count(*) from public.ingredient_allowed_units u
+            where u.ingredient_id = i.id and u.is_default) <> 1),
+  0::bigint,
+  'every ingredient has exactly one default unit'
+);
+
+-- The rule from §2.3: the DEFAULT unit's dimension decides. Volume gives
+-- per_100ml, mass and count both give per_100g.
+--
+-- "Any volume unit present" would be wrong, and this assertion is what
+-- proved it: milk and olive oil are declared per 100 ml but also allow
+-- grams, and allowing an extra unit must not reclassify a liquid. The
+-- default unit is the ingredient's natural measure, so it is the one that
+-- decides.
+select is(
+  (select count(*) from public.ingredients i
+    where i.nutrition_basis <> (
+      case (select un.dimension
+              from public.ingredient_allowed_units u
+              join public.units un on un.id = u.unit_id
+             where u.ingredient_id = i.id and u.is_default)
+        when 'volume' then 'per_100ml' else 'per_100g' end
+    )),
+  0::bigint,
+  'every ingredient''s nutrition_basis matches its default unit''s dimension'
+);
+
+-- Without these bridging values a cross-dimension quantity is not merely
+-- imprecise, it is uncomputable - so a missing one is a silent gap rather
+-- than a rounding error.
+select is(
+  (select count(*) from public.ingredients i
+    where i.density_g_per_ml is null
+      and exists (select 1 from public.ingredient_allowed_units u
+                    join public.units un on un.id = u.unit_id
+                   where u.ingredient_id = i.id and un.dimension = 'mass')
+      and exists (select 1 from public.ingredient_allowed_units u
+                    join public.units un on un.id = u.unit_id
+                   where u.ingredient_id = i.id and un.dimension = 'volume')),
+  0::bigint,
+  'every ingredient spanning mass and volume has a density'
+);
+
+select is(
+  (select count(*) from public.ingredients i
+    where i.grams_per_unit is null
+      and exists (select 1 from public.ingredient_allowed_units u
+                    join public.units un on un.id = u.unit_id
+                   where u.ingredient_id = i.id and un.dimension = 'count')),
+  0::bigint,
+  'every ingredient allowing a count unit has a unit weight'
 );
 
 select * from finish();

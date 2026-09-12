@@ -160,12 +160,18 @@ create table public.ingredients (
 );
 ```
 
-**`nutrition_basis` is decided by dimension, and the rule is exactly this:**
-an ingredient whose units are volume-based is `per_100ml`; **everything
-else — mass *and* count — is `per_100g`.** Spelling out `count` matters:
-eggs are sold by the unit but their nutrition is declared per 100 g, so
-"basis follows the unit dimension" would be undefined for them without this
-sentence.
+**`nutrition_basis` is decided by the DEFAULT unit's dimension, and the
+rule is exactly this:** a default unit that is volume-based gives
+`per_100ml`; **everything else — mass *and* count — gives `per_100g`.**
+Spelling out `count` matters: eggs are sold by the unit but their
+nutrition is declared per 100 g.
+
+It has to be the *default* unit rather than "any allowed unit", and that
+correction came from the assertion catching real data: milk and olive oil
+are declared per 100 ml and also allow grams, so an "any volume unit"
+reading reclassified both. Allowing an extra unit must not change what an
+ingredient is declared against; the default unit is its natural measure,
+so it is the one that decides.
 
 **The two bridging values** turn a quantity in any allowed unit into the
 nutrition basis:

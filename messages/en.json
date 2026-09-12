@@ -215,6 +215,8 @@
     "noSeason": "No season recorded for this ingredient.",
     "foodGroup": "Food group",
     "backToList": "← Back to ingredients",
-    "notFound": "That ingredient does not exist."
+    "notFound": "That ingredient does not exist.",
+    "suitableFor": "Suitable for",
+    "anyDiet": "Any diet"
   }
 }

@@ -70,13 +70,22 @@ See `supabase/migrations/` and `DECISIONS.md` for the RLS design (notably
 the `private.household_role()` SECURITY DEFINER helper used to avoid
 recursive policies).
 
-**Deliberate exception:** shared reference data that isn't private to one
-household (e.g. the global `ingredients` catalog, Phase 2) is not
-`household_id`-scoped — it's a global table with its own write-access
-policy instead of household RLS. This must stay a rare, explicitly-logged
-exception (see `DECISIONS.md`), never a default — if you're adding a new
-table and reaching for "global" instead of `household_id`-scoped, that's a
-decision to discuss and log, not assume.
+**Deliberate exceptions — two so far, both logged.** The global
+`ingredients` catalog (Phase 2) and the global `recipes` catalog
+(Phase 3) are not `household_id`-scoped. Each is a global table whose
+write-access policy replaces household RLS: authenticated users read, no
+user writes at all, and the only write path is a `security definer`
+function called by a seed script under the service role. "No user write
+path" is what earns the exception — it removes the abuse surface rather
+than mitigating it. This must stay rare and explicitly logged (see
+`DECISIONS.md`), never a default: if you're adding a new table and
+reaching for "global" instead of `household_id`-scoped, that's a decision
+to discuss and log, not assume.
+
+**Phase 3 also introduces a per-user scope.** A recipe may eventually be
+owned by a person rather than a household (`owner_user_id`, null meaning
+"the global catalog"), and other people see it by subscribing to that
+person. Household-scoped remains the default for anything new.
 
 New schema changes are **migrations**, checked into
 `supabase/migrations/*.sql` and reviewed like any other code change before

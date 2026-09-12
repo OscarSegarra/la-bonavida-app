@@ -231,12 +231,62 @@ The bullets below stay the roadmap-level summary.
 - Reuse ingredients across recipes instead of retyping them
 
 ## Phase 3 — Recipes
-- Create/edit/delete a recipe (title, servings, instructions)
-- Attach ingredients + quantities to a recipe (references the Phase 2
-  catalog — never a free-text ingredient name)
-- Browse/search recipes within a household
-- Recipes are household-scoped and translatable, reusing the Phase 2
-  translation-companion-table pattern (`recipe_translations`)
+
+**Requirements settled 2026-09-12; not yet built. Detailed build spec:
+`PHASE_3_PLAN.md`.** This is deliberately *not* the Phase 3 earlier drafts
+of this file described — recipes are no longer household-written. The full
+reasoning is in `DECISIONS.md`, in the entries dated 2026-09-12.
+
+- **Recipes are a global, admin-curated catalog**, like the Phase 2
+  ingredient catalog: every authenticated user reads every recipe, no user
+  can write one, and the only write path is `upsert_recipe`, called by
+  `pnpm run seed:recipes` under the service role. User-written recipes
+  come later, once the app has been properly tested.
+- **We write every recipe in all three locales**, so "who translates a
+  household's recipe" does not arise yet. Same translation-companion-table
+  pattern as Phase 2 (`recipe_translations`).
+- **Instructions are ordered step rows**, translated per locale, which the
+  cook can tick off while cooking. Ticks are client-side only — they do
+  not survive a reload and nothing is stored.
+- **Every line references either a catalog ingredient or another recipe**
+  (see below), always with a real quantity and a unit. There is no "to
+  taste" quantity: enter the grams and put "(adjust to taste)" in the step
+  text.
+- **Nutrition is computed recursively from the lines**, never stored, with
+  per-nutrient overrides that win where cooking changed the value and stay
+  put afterwards. Per-serving and per-100 g are derived from the total.
+- **Tags are hand-applied, several per recipe** (`rapido`, `cena`,
+  `navidad`). Diet and allergen facts are **derived** from the ingredients
+  instead — allergens as a union, diets as an intersection — so a tag can
+  never contradict the recipe it is on.
+- **Withdrawing a recipe is a retirement, not a delete**, exactly as for
+  ingredients — and a live recipe may never reference a retired
+  ingredient, because retirement hides the row from readers and the
+  recipe's nutrition would quietly go wrong.
+- **Collections: nothing in Phase 3.** A separate feature that relates to
+  recipes rather than a property of one, and a join table costs the same
+  later as now.
+- **One Phase 2 table changes:** every unit an ingredient allows must be
+  convertible to that ingredient's nutrition basis, so no recipe line can
+  exist whose nutrition cannot be computed.
+
+### Ownership and subscriptions — schema now, feature later
+
+A recipe is owned by **a user**, not a household (`owner_user_id`, null
+meaning "catalog recipe"). Other people see a user's recipes by
+**subscribing to that person**, not to individual recipes. Joining a
+household automatically subscribes its members and the joiner to each
+other, and those subscriptions survive leaving the household — so an
+explicit unsubscribe is what revokes access, and that makes unsubscribe
+part of the feature rather than a nicety.
+
+Only `owner_user_id` and `visibility` land in Phase 3, on the rule that a
+column on a table that will hold live data is cheap now and a data
+migration later. The subscription table is standalone, so it costs the
+same whenever it is built and is not built now. A sub-recipe may only ever
+be the catalog's or your own — never a subscribed author's, since
+unsubscribing would leave a recipe referencing something its owner cannot
+read.
 
 ### A cooked recipe can be an ingredient of another recipe
 
@@ -263,11 +313,18 @@ made for i18n — decided early so it would not be a retrofit. What is
 deferred is the work (picker UI, nutrition roll-up, shopping-list
 recursion), not the shape.
 
-**A recipe is not promoted into the ingredients catalog.** That catalog is
-global and admin-curated on purpose; recipes are household-scoped and
-user-written. Promoting one into the other would either put household
-data in a shared table or reopen the user-writable-shared-resource
-problem the growth-trajectory note above exists to avoid.
+**A recipe is not promoted into the ingredients catalog.** The original
+reason was that the catalog is global and admin-curated while recipes were
+household-scoped and user-written, so promoting one into the other would
+put household data in a shared table. Phase 3 made recipes global and
+admin-curated too, so that argument no longer applies *today* — and the
+conclusion is unchanged for two reasons that do. An ingredient is
+reference data (nutrition per 100 g, allergens, seasonality, allowed
+units); a recipe has a yield, steps and lines. They are different shapes,
+and promoting one would duplicate data rather than link it. And the
+original reason returns in full the moment users can write recipes, which
+is the whole direction of travel — so building the promotion path now
+would mean unbuilding it later.
 
 Four consequences, each easy to miss:
 
@@ -281,16 +338,18 @@ Four consequences, each easy to miss:
    in both nutrition roll-up and the shopping list. A recursive CTE in a
    trigger on insert/update — a real invariant, so it belongs in the
    database, not in a Server Action.
-3. **A sub-recipe reference must stay inside its own household**,
-   otherwise `sub_recipe_id` is a cross-household data leak. A plain FK
-   to `recipes(id)` cannot say that. A composite FK can, and makes it
-   structurally impossible rather than trigger-enforced:
-   `recipes` gets `unique (household_id, id)`, and `recipe_lines` carries
-   `household_id` with
-   `foreign key (household_id, sub_recipe_id) references recipes (household_id, id)`.
-   This is the same preference as Phase 2's `is_default` flag on
-   `ingredient_allowed_units` — express the rule in the schema so it
-   cannot be violated.
+3. **A sub-recipe reference must stay inside its own scope** — originally
+   written as "its own household", and rewritten on 2026-09-12 when
+   recipes became globally curated and user-owned rather than
+   household-scoped. The rule is now "the catalog's, or your own, never a
+   subscribed author's", which is two legal answers and therefore beyond
+   what a plain composite FK can express. A sentinel scope restores the
+   structural guarantee; the exact migration is sketched in
+   `PHASE_3_PLAN.md` §13, and is deferred because in Phase 3 every recipe
+   is global, so every line is already global→global. The preference it
+   preserves is unchanged and is the same one behind Phase 2's `is_default`
+   flag on `ingredient_allowed_units`: express the rule in the schema so
+   it cannot be violated.
 4. **Unit validation has two branches.** A line referencing a catalog
    ingredient is restricted to that ingredient's `ingredient_allowed_units`.
    A line referencing a sub-recipe has no row there at all, and takes its
@@ -305,13 +364,14 @@ surprise:
 - **Phase 6 (fridge)** has the identical either-or shape: cooked rice in
   the fridge is a real thing you have, not just raw ingredients.
 
-**Still open before building** (unchanged, but note that sharing now
-interacts with the above): the recipe language model, who may edit a
-recipe within a household, non-numeric quantities ("to taste"), and
-whether recipe sharing between households is designed now. If recipes can
-ever be shared, the composite FK in point 3 is what stops a shared recipe
-from dragging along a sub-recipe the recipient cannot see — so sharing is
-better answered before that migration than after.
+**Everything previously open here is now answered** (2026-09-12). The
+recipe language model and "who may edit a recipe within a household" both
+dissolved when recipes stopped being household-written — we write all
+three locales and nobody else writes at all. Non-numeric quantities were
+rejected outright: always a number, with the wording in the step text.
+And sharing was answered by subscriptions rather than by household-to-
+household sharing, which is what makes the scope rule in point 3 two-
+valued instead of one-valued.
 
 ## Phase 4 — Meal plans
 - Assign recipes to days of a week
@@ -335,7 +395,9 @@ better answered before that migration than after.
   household. Like a recipe line, a fridge entry points at **either** a
   catalog ingredient **or** a recipe (see Phase 3) — a tub of cooked rice
   in the fridge is a real thing you have, and the same either-or shape
-  and same-household composite FK apply here.
+  applies here, along with the same scope rule: a fridge entry may point
+  at a catalog recipe or one the household's members own, never at a
+  merely-subscribed author's.
 - Manually add/adjust/remove fridge quantities
 - Upgrades Phase 5's shopping-list generation to subtract on-hand fridge
   stock: recipes need 2 onions, fridge has 1, list shows "buy 1" — instead
@@ -404,5 +466,10 @@ signups):**
   catalog entries themselves (see "Deliberately deferred" above).
 - Rate-limiting on any open-write shared resource (pattern already exists
   for `household_invites` — reuse it if a future feature needs it).
+- **Recipe subscriptions** (Phase 3's ownership model): inside a beta of
+  known households, auto-subscription by membership is the whole feature.
+  Once strangers can sign up, "subscribe to anyone" needs a discovery
+  story and a way for an author to remove a subscriber — the first
+  user-to-user surface in the app.
 - Whatever monetization requires (billing integration, plan limits) —
   undefined until we're closer to that point.

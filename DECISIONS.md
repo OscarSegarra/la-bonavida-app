@@ -1804,6 +1804,16 @@ actually needed, rather than half-done now.
 
 ## 2026-09-12 — A cooked recipe can be an ingredient of another recipe
 
+> **Partly superseded the same day** by "Phase 3 recipes are a global,
+> admin-curated catalog" and "Recipes are owned by a user, not by a
+> household", below. The either-or line shape, the entered yield, the
+> cycle prevention and the two-branch unit validation all stand exactly as
+> written. **Consequence 3 does not:** it assumed household scoping, and
+> the scope rule is now "the catalog's or your own". Kept rather than
+> edited, because an ADR log records what was decided and when — including
+> the reasoning that a later decision overturned. See `PHASE_3_PLAN.md`
+> §13 for the replacement.
+
 **Context:** raised before Phase 3 started, which is the only cheap moment
 to answer it. Cooked white rice is eaten on its own *and* used inside
 other dishes. The question was whether that needs anything from Phase 2.
@@ -1889,3 +1899,314 @@ sub-recipe the recipient is not allowed to see.
 **Why a comment fix got its own migration:** SQL comments on this project
 are real queryable Postgres metadata, not prose in a file — which is
 precisely why a wrong one is worth a migration rather than a quiet edit.
+
+---
+
+## 2026-09-12 — Phase 3 recipes are a global, admin-curated catalog, not household data
+
+**Context:** Phase 3 planning. The roadmap, `ARCHITECTURE.md` and
+`CLAUDE.md` all described recipes as household-scoped and household-
+written. Before building any of it, the requirement changed: users will
+not create recipes at all for now. We write every recipe directly, in
+every language, until the app has been properly tested.
+
+**Decision:** recipes become the project's **second** global,
+admin-curated table, built exactly like the Phase 2 ingredient catalog —
+authenticated users read, no user can write, and the only write path is an
+`upsert_recipe` database function called by a seed script under the
+service role, with `execute` revoked from `anon` and `authenticated`.
+
+**Why this is a real exception and not a drift:** `CLAUDE.md` says global
+tables must stay rare and explicitly logged, because `household_id`
+scoping plus RLS is what makes one household's data unreachable by
+another. The justification here is the one the ingredient catalog earned:
+**there is no user write path at all**, so there is no cross-household
+data in the table to protect, and no moderation or abuse surface to design
+around. A recipe written by us is reference data in the same sense a
+nutrient value is.
+
+**What it costs:** the reversal invalidates three things already written
+down. The recipe language model (who translates a household's recipe) and
+"who may edit a recipe within a household" both dissolve — there are no
+household recipes to translate or edit. And the composite foreign key from
+the sub-recipe decision loses the problem it existed to solve, because
+there is no `household_id` on a recipe to keep a sub-recipe inside. See
+the next entry for what replaced it.
+
+**What it does not change:** everything about sub-recipes, yields, cycle
+prevention and two-branch unit validation survives intact — those are
+consequences of a recipe being able to contain another recipe, not of who
+owns it.
+
+---
+
+## 2026-09-12 — Recipes are owned by a user, not by a household
+
+**Context:** with recipes global for now, the question is what the
+ownership column should be when users can eventually write them — because
+the column has to land in Phase 3's first migration, on the same reasoning
+that put `sub_recipe_id` there: today it is one nullable column, later it
+is a data migration against live data.
+
+**Decision:** `recipes.owner_user_id uuid null references profiles(id)`.
+Null means "catalog recipe, owned by nobody". A user's recipes belong to
+the person, not to a household.
+
+**The alternative, and why it lost:** `household_id`, matching every other
+table in the app, was the recommendation — consistent, and every member of
+a household would see and edit the household's recipes. The user chose
+per-user ownership: your recipe collection is yours and follows you.
+
+**The objection raised against it, and why it turned out not to bite:**
+per-user ownership normally raises "what happens to your recipes when you
+leave a household?" — a question with no good answer. It does not bite
+here, because recipes are not reached *through* a household at all. They
+are reached through subscriptions (next entry), which are granted by
+household membership but do not depend on it continuing.
+
+`profiles(id)`, not `auth.users(id)` — the Phase 1 rule that taking part
+in app data requires a profile. `on delete restrict`, so deleting a person
+is blocked while they own recipes; what should actually happen to those
+recipes is a real decision, deferred and recorded in `PHASE_3_PLAN.md`
+§13.2.
+
+---
+
+## 2026-09-12 — A user's recipes reach other people by subscription, not by sharing
+
+**Context:** if a recipe belongs to a person rather than a household,
+something has to explain how anyone else ever sees it.
+
+**Decision:** a person **subscribes to another person's recipes** — all of
+them, not one at a time. Joining a household automatically subscribes the
+household's members and the joiner to each other, so a family shares its
+cooking without anyone administering a list. Those subscriptions **survive
+leaving the household**. Built later, alongside user-written recipes;
+`PHASE_3_PLAN.md` §13.1 holds the schema and the policy.
+
+**Why per-author rather than per-recipe:** per-recipe sharing is a
+permission system — a grant per recipe per person, plus a UI to manage it.
+Per-author is one row per pair of people, and it matches what actually
+happens in a family: you want everything your mother cooks, not recipe
+#4712.
+
+**Three consequences worth stating outright:**
+
+1. **`visibility` is `private` / `shared`, not `private` / `public`.** A
+   shared recipe is visible to the people subscribed to its author, not to
+   the world, and a value named `public` would be a lie in the schema. The
+   Phase 3 migration uses the right names from the start rather than
+   renaming a check constraint after the fact.
+2. **Leaving a household does not revoke recipe access.** Deliberate — you
+   do not lose a relative's recipes because they moved out — and it makes
+   explicit unsubscribe a required part of the feature rather than a
+   nicety, because unsubscribing becomes the only way to revoke. Flagged
+   as a known ceiling the user may revisit.
+3. **A sub-recipe may still only be the catalog's or your own, never a
+   subscribed author's.** This is the one place the feature is told no. A
+   line pointing at someone else's recipe would break the moment the
+   subscription ended — a recipe holding a reference its owner cannot
+   read, whose nutrition silently changes or fails. Building on someone
+   else's recipe means copying it.
+
+**Growth trajectory:** subscriptions are the first user-to-user surface in
+this module. Within a beta of known households nothing more is needed;
+once strangers can sign up, "subscribe to anyone" needs a discovery story
+and a way for an author to remove a subscriber. Added to the
+pre-public-launch checklist in `PLAN.md`.
+
+---
+
+## 2026-09-12 — Recipe nutrition is computed recursively, with sticky per-nutrient overrides
+
+**Context:** the requirement is that every recipe has nutritional values,
+defaulting to the sum of its ingredients but correctable, because cooking
+changes them. Earlier planning had deferred the nutrition roll-up
+entirely.
+
+**Decision:** compute it, never store it — a recursive SQL function over
+the recipe's lines. The only stored numbers are **per-nutrient overrides**
+in `recipe_nutrient_overrides`, which replace the computed value for that
+one nutrient and leave every other nutrient computing.
+
+**Why computed and not stored:** the Phase 2 seed is re-runnable and
+updates ingredient nutrition. A stored sum would go stale the moment a
+value was corrected, with nothing to show that it had — the same class of
+failure as the retired-ingredient trap below: a number that is wrong
+without looking wrong.
+
+**Why per-nutrient rather than per-recipe overrides:** frying changes fat
+and energy. A whole-recipe override would mean retyping thirty vitamin
+values to correct two.
+
+**Why the stored basis is the recipe total:** per-serving and per-100 g
+are then both derived by dividing, so there is one number and one place it
+can be wrong. Storing per-100 g would make a hand-entered measurement
+depend silently on `yield_quantity`, so editing the yield would change a
+number a person had deliberately written.
+
+**Overrides are deliberately sticky.** If an ingredient is later
+corrected, a recipe overriding that nutrient keeps its value and nothing
+flags it as stale. That is the requested behaviour and the correct one: an
+override is a measurement of the finished dish, which does not become
+wrong because a reference table was edited. The cost — a wrong override
+stays invisible until someone looks — is recorded as a risk rather than
+solved.
+
+**This un-defers work that was explicitly deferred.** "Every recipe has
+nutrition" plus "a line can point at another recipe" makes the roll-up
+recursive on day one, which was the single largest thing earlier planning
+had postponed. Accepted knowingly; it is most of the reason Phase 3's
+build sequence is five database slices before any UI.
+
+**Two honesty mechanisms** came out of the same reasoning: the function
+returns a `complete` flag per nutrient, false where any contributing line
+had no data for it (Phase 2 nutrient data is sparse by design beyond the
+eight EU-mandatory values), and per-100 g is simply not offered for a
+recipe whose yield is not a mass, because a recipe has no density of its
+own and guessing one would be inventing a fact.
+
+---
+
+## 2026-09-12 — Every allowed unit of an ingredient must be convertible to its nutrition basis
+
+**Context:** summing a recipe means converting "2 eggs" and "250 ml milk"
+into the basis each ingredient's nutrition is stated in. Phase 2 added
+`density_g_per_ml` and `grams_per_unit` for exactly this, left both
+nullable, and never wrote the conversion logic. The proposal was to make
+both columns `not null`, since the catalog is curated by one person who
+can simply fill them in.
+
+**Decision: rejected, and replaced with a sharper rule** — every unit an
+ingredient allows must be convertible to that ingredient's
+`nutrition_basis` dimension. A volume unit against a `per_100g` basis
+requires a density; a count unit requires a grams-per-unit; a count unit
+against a `per_100ml` basis requires both; same-dimension needs neither.
+Enforced by constraint triggers on both `ingredient_allowed_units` and
+`ingredients`, so it cannot be broken from either side.
+
+**Why `not null` was the wrong shape:** olive oil has no meaningful
+grams-per-unit and flour has no per-unit weight. `not null` would demand a
+number where none exists, and a fabricated value is indistinguishable from
+a measured one — directly against Phase 2's own recorded limit that these
+approximations must never be surfaced as exact.
+
+**What it buys:** the guarantee that was actually wanted — no recipe line
+can exist whose nutrition cannot be computed — without ever asking for a
+number that is not real. It also follows the Phase 2 precedent of
+preferring the constraint that *removes* a restriction: rather than
+banning cross-dimension units, make the data that supports them mandatory
+exactly where they are used.
+
+---
+
+## 2026-09-12 — Retirement covers recipes too, and a live recipe may never reference a retired ingredient
+
+**Context:** Phase 2 established that an ingredient leaves the catalog by
+being retired, not deleted, so existing references keep resolving. Phase 3
+adds two new kinds of reference: a recipe line pointing at an ingredient,
+and a recipe line pointing at another recipe.
+
+**Decision:** recipes get `retired_at` and the same treatment, plus
+`on delete restrict` on both reference columns — so a real delete is only
+possible for a recipe nothing points at, and the normal way to withdraw
+something is to retire it. Phase 4's meal plans will meet the same
+question and should answer it the same way.
+
+**And the trap that makes it matter:** retirement works by *hiding the row
+from readers* via the select policy. A live recipe holding a foreign key
+to a retired ingredient would therefore render with a line silently
+missing and its nutrition quietly too low — no error, no broken page, just
+a smaller number. So retirement is blocked in both directions: a line
+cannot be written onto a retired ingredient, and retiring an ingredient
+fails while a live recipe uses it.
+
+**The alternative considered:** let recipes read through to retired rows
+via a special-case RLS policy. Rejected — a second, subtler visibility
+rule on a table whose whole security model is one simple policy, in order
+to avoid a curation step that should be explicit anyway. Retiring an
+ingredient that recipes use *should* make someone deal with those recipes.
+
+---
+
+## 2026-09-12 — Recipe instructions are step rows, and ticking them off is client-side only
+
+**Context:** the requirement is that instructions are separated into steps
+so that the cook can mark which ones they have already done.
+
+**Decision:** `recipe_steps` (one row per step, ordered) with a
+`recipe_step_translations` companion, following the same translation
+pattern as everything else. The tick state is **React state in a Client
+Component and nothing else** — it does not survive a reload and is not
+stored anywhere.
+
+**Why steps are rows and not a text blob with newlines:** ticking a step
+requires the step to have an identity. A JSON array inside the translation
+row would be fewer tables, but nothing would stop the Spanish and Catalan
+versions of a recipe from disagreeing about how many steps it has, and
+"step 3" would mean different things in different languages. With the step
+as the parent row and translations hanging off it, that is structurally
+impossible.
+
+**Why the ticks are not persisted:** persisting them turns a
+within-session convenience into a real feature with real questions — is my
+partner's progress the same as mine, when does it reset, what happens if
+two people cook the same recipe at once — and it would be the first
+user-writable table in this module, needing RLS and a reset rule. None of
+that buys anything over state that lasts as long as the cooking does. If
+it ever needs to survive a reload, or sync between two phones in one
+kitchen, it becomes a real table and those questions get answered then.
+
+**Note for consistency:** this is a deliberate, allowed use of a Client
+Component under the project's Server-Components-by-default rule, which
+exists to avoid needless round trips — there is no data being fetched
+here at all.
+
+---
+
+## 2026-09-12 — Recipe tags are hand-applied; diet and allergen facts are derived
+
+**Context:** recipes need tags, and a recipe may have several. Phase 2
+already has a `dietary_tags` vocabulary (allergen or diet) applied to
+ingredients.
+
+**Decision:** two separate mechanisms that must not be merged. A
+`recipe_tags` vocabulary, translated and admin-curated, for things a
+person decides — `rapido`, `cena`, `postre`, `navidad`. And diet and
+allergen facts **computed** from the recipe's lines, never typed.
+
+**Why not one tag table:** a hand-applied "vegan" tag can contradict the
+recipe's own ingredients, and nothing would be able to say which one was
+lying. Deriving it means the answer cannot disagree with the recipe.
+
+**The asymmetry, which is easy to get backwards:** allergens are a
+**union** — if any leaf ingredient contains gluten, the recipe does. Diets
+are an **intersection** — a recipe is vegan only if *every* leaf
+ingredient is. Both walk recursively through sub-recipe lines.
+
+**Naming:** the join table is `recipe_tag_assignments`, deviating from
+Phase 2's `ingredient_dietary_tags` convention, because the consistent
+name would have been `recipe_recipe_tags`.
+
+---
+
+## 2026-09-12 — Collections are a separate feature, and nothing about them lands in Phase 3
+
+**Context:** recipes should eventually belong to collections, and a recipe
+may be in more than one.
+
+**Decision:** build nothing. No table, no column, no join — collections
+are a feature that relates to recipes rather than a property of one, and a
+many-to-many join table added later costs exactly what it would cost now.
+
+**Why this is different from `sub_recipe_id` and `owner_user_id`**, which
+*do* land early despite also being unused: those are columns on a table
+that will hold live data, so adding them later means a data migration. A
+collections table is standalone — creating it later is a `create table`
+against nothing. The rule is not "put everything in early", it is "put in
+early only what gets expensive later".
+
+**One thing to decide when it is built, not now:** whether a collection is
+global (curated by us, like the catalog) or belongs to a user. If
+user-owned, it is a user-writable resource and the growth-trajectory rule
+applies.

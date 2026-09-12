@@ -255,10 +255,18 @@ reasoning is in `DECISIONS.md`, in the entries dated 2026-09-12.
 - **Nutrition is computed recursively from the lines**, never stored, with
   per-nutrient overrides that win where cooking changed the value and stay
   put afterwards. Per-serving and per-100 g are derived from the total.
+  **Built in Phase 3b, not Phase 3** — it needs no migration against
+  existing data, so it can wait, but it is gated on the catalog staying
+  under ~25 recipes until it exists, because turning it on is when
+  unconvertible data surfaces. What ships in Phase 3 is everything that
+  gets expensive later: required yields, and the ingredient
+  convertibility rule below.
 - **Tags are hand-applied, several per recipe** (`rapido`, `cena`,
   `navidad`). Diet and allergen facts are **derived** from the ingredients
   instead — allergens as a union, diets as an intersection — so a tag can
-  never contradict the recipe it is on.
+  never contradict the recipe it is on. The tags ship in Phase 3; the
+  derived facts share the roll-up's recursive walk and so ship with it in
+  Phase 3b.
 - **Withdrawing a recipe is a retirement, not a delete**, exactly as for
   ingredients — and a live recipe may never reference a retired
   ingredient, because retirement hides the row from readers and the

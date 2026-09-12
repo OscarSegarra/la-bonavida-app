@@ -2053,11 +2053,24 @@ wrong because a reference table was edited. The cost — a wrong override
 stays invisible until someone looks — is recorded as a risk rather than
 solved.
 
-**This un-defers work that was explicitly deferred.** "Every recipe has
-nutrition" plus "a line can point at another recipe" makes the roll-up
-recursive on day one, which was the single largest thing earlier planning
-had postponed. Accepted knowingly; it is most of the reason Phase 3's
-build sequence is five database slices before any UI.
+**When it gets built: Phase 3b, not Phase 3 — with a gate.** The
+requirement is that the *system* is in place, not that it runs from the
+start. Every piece of it is a `create function` and a `create table`
+against a catalog that already has the right shape, so deferring it costs
+no migration later — which is the condition the deferral was granted on.
+
+What the deferral does *not* cover is the part that gets expensive with
+time: `servings` and the yield columns are `not null` on a table that will
+hold rows, and the ingredient convertibility constraint is cheap against
+62 ingredients and steadily less cheap after. Both ship in Phase 3.
+
+**The gate is ~25 recipes**, and it exists because the cost of waiting is
+in the data, not the code. Turning the roll-up on is the moment a line
+that cannot be converted, or a yield stated in the wrong dimension,
+finally surfaces. Across 20 recipes that is an afternoon; across 200 it is
+a curation project. The importer prints the count and the gate on every
+run, because a deadline nobody is reminded of is how "later" becomes
+"never".
 
 **Two honesty mechanisms** came out of the same reasoning: the function
 returns a `complete` flag per nutrient, false where any contributing line

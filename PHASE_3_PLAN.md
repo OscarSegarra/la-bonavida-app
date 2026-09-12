@@ -27,11 +27,11 @@ tested. Every reversal that follows from that is recorded in
   reload.
 - **Recipe lines** that reference *either* a catalog ingredient *or*
   another recipe, with units validated differently per branch.
-- **Nutrition computed recursively** from the lines, with per-nutrient
-  overrides that win wherever they exist and stay put when the underlying
-  ingredients change.
-- **Derived diet and allergen facts** from the lines, plus a separate,
-  hand-applied **tag** vocabulary.
+- A separate, hand-applied **tag** vocabulary.
+- Everything the nutrition roll-up will need, but **not the roll-up
+  itself** — see §4. Recursive nutrition, per-nutrient overrides and
+  derived diet/allergen facts are Phase 3b, gated on the catalog staying
+  small until they exist.
 - **Retirement, not deletion**, matching the ingredient catalog.
 - Browse, search and detail UI in all three locales.
 
@@ -325,6 +325,26 @@ Phase 2 post-build review established.
 
 ## 4. Nutrition: the exact arithmetic
 
+> **Deferred to Phase 3b, with a hard gate.** The requirement is that the
+> *system* is in place, not that it runs from day one. Everything in this
+> section is a `create function` and a `create table` against a catalog
+> that already has the right shape — no backfill, no data migration, no
+> rewrite of anything Phase 3 ships. So it waits.
+>
+> **The gate: it must be built before the catalog grows past ~25
+> recipes.** Not because the code gets harder — it does not — but because
+> *the data does*. Turning the roll-up on is when a line that cannot be
+> converted, or a yield stated in the wrong dimension, finally surfaces.
+> Finding that across 20 recipes is an afternoon; across 200 it is a
+> curation project. The `seed:recipes` importer should print the count and
+> the gate on every run, so "later" cannot quietly become "never".
+>
+> **What does *not* wait**, because it is the part that gets expensive:
+> `servings`, `yield_quantity` and `yield_unit_id` are `not null` columns
+> on a table that will hold rows (§2.1), and the ingredient convertibility
+> constraint (§2.6) is cheap against today's 62 ingredients and grows with
+> the catalog. Both ship in Phase 3.
+
 Computed on read by a SQL function, never stored. The Phase 2 seed is
 re-runnable and updates ingredient nutrition, so a stored sum would go
 stale the moment a value was corrected, with nothing to indicate that it
@@ -435,22 +455,37 @@ src/modules/recipes/
   index.ts            the only file anything outside the module may import
 ```
 
-**Two module-boundary questions this phase forces, both flagged rather
-than quietly resolved:**
+**Two things currently inside the ingredients module have to move out**,
+because a second module now needs them and the boundary lint rule will
+correctly refuse a cross-module import. Both moves follow an existing
+precedent rather than inventing a rule: `listUnits()` was *removed* from
+the ingredients module during the Phase 2 review, because units are shared
+platform reference data and wrapping them in one module's connector
+implied an ownership that does not exist.
 
-1. **Accent-tolerant matching** already exists in
-   `src/modules/ingredients/domain/search.ts`, and recipe search needs
-   exactly the same behaviour. Copying it means two copies drifting;
-   importing it across modules is a boundary violation the lint rule will
-   correctly reject. *Proposal: lift the text-folding helper to a shared
-   `src/lib/text.ts`* — platform utility, owned by no module, like
-   `locales` — leaving each module's `search.ts` to the part that is
-   actually about its own data.
-2. **`NutritionTable.tsx`** lives in `ingredients/ui` and renders generic
-   nutrient rows. *Proposal: export it from the ingredients connector*
-   (`src/modules/ingredients/index.ts`) rather than duplicating it, since
-   the connector is exactly the mechanism for a module to publish
-   something another module may use.
+1. **Accent-tolerant text matching**, today in
+   `ingredients/domain/search.ts`. Recipe search needs identical
+   behaviour, and so will collections and the fridge. → **`src/lib/text.ts`**,
+   a platform utility owned by no module, leaving each module's
+   `search.ts` to the part that is genuinely about its own data.
+2. **Nutrient presentation**, today split between
+   `ingredients/domain/nutrition.ts` (`groupNutrientsByCategory`,
+   `formatNutrientAmount`, `NutrientValue`) and
+   `ingredients/ui/NutritionTable.tsx`. Neither is about ingredients —
+   they are about **nutrients**, which are shared reference data exactly
+   like units and locales. A recipe's nutrition panel is the same EU
+   declaration table with the same indented sub-declarations and the same
+   per-locale number formatting. → **`src/lib/nutrition/`**, imported
+   directly by both modules.
+
+Exporting `NutritionTable` from the ingredients connector was the
+alternative, and it is the wrong shape for the same reason `listUnits()`
+was: it would say the recipes module gets its nutrition rendering *from
+the ingredients module*, which is not true and would make a future change
+to nutrient display look like an ingredients change.
+
+Both moves are pure relocations with no behaviour change, so they belong
+in the first Phase 3 PR, before anything depends on them.
 
 ---
 
@@ -519,18 +554,31 @@ yield and one with a count yield.
 
 Each step is a PR, in this order, mirroring how Phase 2 was sliced:
 
-1. **Ingredient convertibility** (§2.6) — a Phase 2 table change, and a
-   prerequisite for nutrition. Smallest, and it lands independently.
-2. **Recipe schema + RLS** (§2.1–2.5, §5) — tables, constraints, policies.
-3. **Invariant triggers** (§3) — units, cycles, depth, retirement.
-4. **`upsert_recipe` + `set_recipe_retired`** (§8).
-5. **Nutrition function** (§4) — recursive totals, overrides, completeness,
-   derived diet/allergen facts.
+1. **Shared-code moves** (§6) — `src/lib/text.ts` and `src/lib/nutrition/`
+   out of the ingredients module. Pure relocation, no behaviour change,
+   and it lands before anything depends on it.
+2. **Ingredient convertibility** (§2.6) — a Phase 2 table change. Cheap
+   against 62 ingredients and steadily less cheap after, which is why it
+   is here and not in 3b with the roll-up it serves.
+3. **Recipe schema + RLS** (§2.1–2.5, §5) — tables, constraints, policies.
+4. **Invariant triggers** (§3) — units, cycles, depth, retirement.
+5. **`upsert_recipe` + `set_recipe_retired`** (§8).
 6. **Seed pipeline** (§8) — types, validator, importer, dataset.
-7. **UI** (§6) — list, search, detail, tickable steps, nutrition panel.
+7. **UI** (§6) — list, search, detail, tickable steps.
 
-Steps 1–5 are testable entirely from pgTAP with no UI at all, which is
+Steps 2–5 are testable entirely from pgTAP with no UI at all, which is
 where most of this phase's risk lives.
+
+**Phase 3b — before the catalog passes ~25 recipes** (§4):
+
+8. **Nutrition function** — recursive totals, per-nutrient overrides,
+   completeness flag.
+9. **Derived diet/allergen facts** — the same recursive walk.
+10. **Nutrition UI** — the panel on a recipe's page, reusing
+    `src/lib/nutrition/` from step 1.
+
+Nothing in 8–10 alters a table Phase 3 created, which is the whole reason
+they can wait.
 
 ---
 
@@ -565,7 +613,10 @@ Refusals to assert:
   ingredient's basis; nulling a factor that an existing allowed unit
   needs.
 
-Arithmetic assertions, against fixture recipes with hand-computed answers:
+Arithmetic assertions, against fixture recipes with hand-computed answers.
+**These land with Phase 3b**, alongside the function they test — except
+the last two convertibility refusals above, which belong to the constraint
+and ship in Phase 3:
 
 - Same-dimension conversion (a line in kg against `per_100g`).
 - Cross-dimension via density (a line in ml against `per_100g`).
@@ -611,6 +662,10 @@ functions without a pinned `search_path` are exactly what it catches.
 
 ## 11. Explicitly out of scope
 
+- **The nutrition roll-up, its overrides and derived diet/allergen facts.**
+  Phase 3b, gated on the catalog staying under ~25 recipes until then
+  (§4). The schema that makes it possible — required yields, convertible
+  units — ships in Phase 3.
 - **User-written recipes.** Columns land now (§2.1), feature later (§13).
 - **Collections.** A separate feature, related to recipes but not a field
   on them. Nothing in Phase 3 — not even a table.
@@ -630,6 +685,12 @@ functions without a pinned `search_path` are exactly what it catches.
 
 ## 12. Risks carried into this phase
 
+- **The Phase 3b gate is the main new risk.** Deferring the roll-up costs
+  nothing in code and everything in data if the gate is missed: every
+  recipe written before it exists is a recipe whose convertibility has
+  never been tested end to end. The importer printing the count on every
+  run is the cheapest thing that keeps it honest, and it is worth
+  building even though it is three lines.
 - **Nutrient completeness beyond the EU-mandatory eight.** Handled by the
   `complete` flag (§4.3) rather than solved. A recipe's vitamin figures
   will often be partial, and the UI must never present them as totals.

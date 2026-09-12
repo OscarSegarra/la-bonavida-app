@@ -1799,3 +1799,93 @@ ceiling is the ~5,000-ingredient figure in `PHASE_2_PLAN.md` §8.5; pushing
 search server-side needs the `unaccent` extension and an index, which is
 the same work as real typo tolerance. Left as one job for when either is
 actually needed, rather than half-done now.
+
+---
+
+## 2026-09-12 — A cooked recipe can be an ingredient of another recipe
+
+**Context:** raised before Phase 3 started, which is the only cheap moment
+to answer it. Cooked white rice is eaten on its own *and* used inside
+other dishes. The question was whether that needs anything from Phase 2.
+
+**Answer: no Phase 2 change, but one Phase 3 decision cannot wait.**
+
+**Decision:** a recipe line references **either** a catalog ingredient
+**or** another recipe, exactly one of the two, enforced by
+`check (num_nonnulls(ingredient_id, sub_recipe_id) = 1)`. Both columns go
+into Phase 3's *first* migration; the feature that uses the second one
+ships later.
+
+**The option rejected, and why it is the interesting one:** promote a
+cooked recipe into the `ingredients` catalog. It is tempting because
+everything downstream would then work for free — units, nutrition,
+allergens, seasonality all reuse machinery that already exists and is
+tested.
+
+Phase 2 rules it out. That catalog is **global and admin-curated**, a
+logged exception to household scoping whose entire justification is that
+no user can write to it. A household's cooked rice, made to that
+household's yield, is not shared reference data. Promoting it would either
+put household data in a globally-readable table or reopen exactly the
+user-writable-shared-resource problem the growth-trajectory section of
+`CLAUDE.md` exists to prevent — "any household can add to the ingredient
+catalog" is a moderation and abuse surface the moment strangers can sign
+up. So a cooked recipe is not an ingredient; it is a second, different
+kind of thing a line can point at.
+
+**Why the columns land now rather than when the feature is built:** there
+is no recipe schema yet, so today this costs one nullable column and one
+check constraint. Once households have saved real recipes, the same change
+is a data migration against live data. This is the same reasoning that put
+i18n in Phase 2 instead of retrofitting it. Note what is *not* being
+built early: the picker UI, the nutrition roll-up, and the shopping-list
+recursion are all deferred. Only the shape is fixed. This is not
+speculative generality — the requirement was stated outright.
+
+**Four consequences, each of which would otherwise be found late:**
+
+1. **Yield must be entered by a person, not derived.** Nutrition for a
+   sub-recipe line is the sub-recipe's total divided by its yield, so
+   `recipes` needs `yield_quantity` + `yield_unit_id`. That yield cannot
+   be computed from the inputs: 300 g of raw rice becomes roughly 750 g
+   cooked, because it absorbs water. Whoever writes the recipe states it.
+   Same trade as the per-count 100 g equivalence — usability over
+   precision.
+2. **Cycles must be blocked in Postgres.** A → B → A is an infinite loop
+   in nutrition roll-up *and* in the shopping list. A recursive CTE in a
+   trigger on insert/update. A real invariant belongs in the database, not
+   in a Server Action, per this project's standing rule.
+3. **A sub-recipe reference must stay within its own household.**
+   Otherwise `sub_recipe_id` is a cross-household data leak, and a plain
+   FK to `recipes(id)` cannot express the restriction. A **composite FK**
+   can: give `recipes` a `unique (household_id, id)`, carry
+   `household_id` on `recipe_lines`, and reference
+   `recipes (household_id, id)`. That makes a cross-household reference
+   structurally impossible rather than trigger-enforced — the same
+   preference that put `is_default` on `ingredient_allowed_units` instead
+   of a `default_unit_id` column on `ingredients`.
+4. **Unit validation has two branches, and Phase 2 only promised one.**
+   The `ingredient_allowed_units` table comment said "Phase 3 will enforce
+   that a recipe line may only use a unit listed here for the ingredient
+   it references" — correct for a catalog-ingredient line, and silently
+   wrong for a sub-recipe line, which has no row in that table at all.
+   Left as written, the first person implementing it would either reject
+   every sub-recipe line or quietly drop the check. Corrected in migration
+   `20260912110000`; sub-recipe lines take their units from the
+   sub-recipe's declared yield unit.
+
+**Knock-on effects recorded now so later phases are not surprised:**
+Phase 5's shopping list must recurse through sub-recipe lines to reach
+leaf catalog ingredients — a recursive CTE, not a join. Phase 6's fridge
+has the identical either-or shape, because cooked rice in the fridge is a
+real thing you have.
+
+**One open question this makes urgent:** whether recipes can be shared
+between households was already on the Phase 3 list. It should be answered
+*before* the migration in point 3, not after: if sharing ever exists, the
+composite FK is what stops a shared recipe from dragging along a
+sub-recipe the recipient is not allowed to see.
+
+**Why a comment fix got its own migration:** SQL comments on this project
+are real queryable Postgres metadata, not prose in a file — which is
+precisely why a wrong one is worth a migration rather than a quiet edit.

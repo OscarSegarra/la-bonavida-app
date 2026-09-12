@@ -235,6 +235,83 @@ The bullets below stay the roadmap-level summary.
 - Attach ingredients + quantities to a recipe (references the Phase 2
   catalog — never a free-text ingredient name)
 - Browse/search recipes within a household
+- Recipes are household-scoped and translatable, reusing the Phase 2
+  translation-companion-table pattern (`recipe_translations`)
+
+### A cooked recipe can be an ingredient of another recipe
+
+Cooked white rice is eaten on its own *and* used inside other dishes. So
+a recipe line points at **either** a catalog ingredient **or** another
+recipe. Full reasoning in `DECISIONS.md`; the roadmap-level shape:
+
+```sql
+recipe_lines (
+  recipe_id     -> recipes(id),
+  ingredient_id -> ingredients(id)  null,
+  sub_recipe_id -> recipes(id)      null,
+  quantity numeric not null,
+  unit_id       -> units(id),
+  check (num_nonnulls(ingredient_id, sub_recipe_id) = 1)
+)
+```
+
+**The two columns go in Phase 3's first migration even though the feature
+ships later.** There is no recipe schema yet, so today this is one column
+and one constraint; after households have saved real recipes the same
+change is a data migration on live data. Same call the project already
+made for i18n — decided early so it would not be a retrofit. What is
+deferred is the work (picker UI, nutrition roll-up, shopping-list
+recursion), not the shape.
+
+**A recipe is not promoted into the ingredients catalog.** That catalog is
+global and admin-curated on purpose; recipes are household-scoped and
+user-written. Promoting one into the other would either put household
+data in a shared table or reopen the user-writable-shared-resource
+problem the growth-trajectory note above exists to avoid.
+
+Four consequences, each easy to miss:
+
+1. **Yield is entered, not derived.** `recipes` needs `yield_quantity` +
+   `yield_unit_id`, filled in by whoever writes the recipe. It cannot be
+   computed by summing input weights: 300 g of raw rice becomes ~750 g
+   cooked because it absorbs water. Nutrition for a sub-recipe line is
+   the sub-recipe's total ÷ its yield. Same usability-over-precision
+   stance as the per-count 100 g equivalence decision.
+2. **Cycles must be blocked in Postgres.** A → B → A is an infinite loop
+   in both nutrition roll-up and the shopping list. A recursive CTE in a
+   trigger on insert/update — a real invariant, so it belongs in the
+   database, not in a Server Action.
+3. **A sub-recipe reference must stay inside its own household**,
+   otherwise `sub_recipe_id` is a cross-household data leak. A plain FK
+   to `recipes(id)` cannot say that. A composite FK can, and makes it
+   structurally impossible rather than trigger-enforced:
+   `recipes` gets `unique (household_id, id)`, and `recipe_lines` carries
+   `household_id` with
+   `foreign key (household_id, sub_recipe_id) references recipes (household_id, id)`.
+   This is the same preference as Phase 2's `is_default` flag on
+   `ingredient_allowed_units` — express the rule in the schema so it
+   cannot be violated.
+4. **Unit validation has two branches.** A line referencing a catalog
+   ingredient is restricted to that ingredient's `ingredient_allowed_units`.
+   A line referencing a sub-recipe has no row there at all, and takes its
+   units from the sub-recipe's declared yield unit instead. Phase 2's
+   table comment used to promise only the first half; corrected in
+   `20260912110000`.
+
+**Knock-on effects in later phases**, recorded here so they are not a
+surprise:
+- **Phase 5 (shopping lists)** must recurse through sub-recipe lines to
+  reach leaf catalog ingredients — a recursive CTE, not a single join.
+- **Phase 6 (fridge)** has the identical either-or shape: cooked rice in
+  the fridge is a real thing you have, not just raw ingredients.
+
+**Still open before building** (unchanged, but note that sharing now
+interacts with the above): the recipe language model, who may edit a
+recipe within a household, non-numeric quantities ("to taste"), and
+whether recipe sharing between households is designed now. If recipes can
+ever be shared, the composite FK in point 3 is what stops a shared recipe
+from dragging along a sub-recipe the recipient cannot see — so sharing is
+better answered before that migration than after.
 
 ## Phase 4 — Meal plans
 - Assign recipes to days of a week
@@ -248,11 +325,17 @@ The bullets below stay the roadmap-level summary.
 - Multiple household members can see the same list update live
 - (No fridge-awareness yet — that's Phase 6. This phase's generation is
   pure recipe-quantity aggregation.)
+- **Aggregation has to recurse.** A recipe line can point at another
+  recipe (see Phase 3), so reaching the leaf catalog ingredients a
+  shopping list is actually made of means a recursive CTE, not a single
+  join. A recipe using cooked rice must still put *raw rice* on the list.
 
 ## Phase 6 — Fridge / pantry
-- Inventory of what a household currently has on hand (ingredient +
-  quantity, scoped to household — references the Phase 2 catalog, same as
-  recipes)
+- Inventory of what a household currently has on hand, scoped to
+  household. Like a recipe line, a fridge entry points at **either** a
+  catalog ingredient **or** a recipe (see Phase 3) — a tub of cooked rice
+  in the fridge is a real thing you have, and the same either-or shape
+  and same-household composite FK apply here.
 - Manually add/adjust/remove fridge quantities
 - Upgrades Phase 5's shopping-list generation to subtract on-hand fridge
   stock: recipes need 2 onions, fridge has 1, list shows "buy 1" — instead

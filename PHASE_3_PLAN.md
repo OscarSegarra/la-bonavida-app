@@ -165,7 +165,13 @@ table to be readable in three languages — a whole table for one field that
 duplicates text we are already writing.
 
 `on delete restrict` on both reference columns is what answers "what
-happens if it gets deleted" — see §2.7 and §3.
+happens if it gets deleted" — see §2.8 and §3.
+
+**Two lines may name the same ingredient**, deliberately: onion added at
+the start and more at the end is a real recipe, so there is no unique
+constraint on `(recipe_id, ingredient_id)`. The consequence belongs to
+whoever consumes the lines — nutrition sums them, and Phase 5's shopping
+list must aggregate them into one item rather than listing onion twice.
 
 ### 2.4 Tags
 
@@ -268,7 +274,28 @@ This asks for a number only where a number genuinely exists, and it gives
 the guarantee that actually matters: **no recipe line can be written whose
 nutrition cannot be computed.**
 
-### 2.7 What is *not* constrained in the database
+### 2.7 Indexes
+
+Phase 2 dropped an index as an unearned optimisation on a few-thousand-row
+table, and that instinct is right — but these three are not optimisations,
+they back rules that run on **every write**:
+
+```sql
+create index recipe_lines_sub_recipe_idx on public.recipe_lines (sub_recipe_id)
+  where sub_recipe_id is not null;
+create index recipe_lines_ingredient_idx on public.recipe_lines (ingredient_id)
+  where ingredient_id is not null;
+create index recipe_lines_recipe_idx     on public.recipe_lines (recipe_id);
+```
+
+The first is walked by the cycle and depth triggers and by "which recipes
+use this one?" before a retirement. The second answers "is any live recipe
+using this ingredient?", which runs on every attempt to retire an
+ingredient. The third is the parent lookup every read and the nutrition
+recursion does. Without them each of those is a sequential scan of the
+whole line table on every single write.
+
+### 2.8 What is *not* constrained in the database
 
 - **That a recipe has at least one line.** A recipe wrapping a single
   ingredient — an apple, a handful of almonds, a glass of milk — is a real
@@ -317,9 +344,25 @@ Phase 2 post-build review established.
    readers*, so without this rule a recipe would render with an ingredient
    line silently missing and its nutrition quietly too low — no error,
    just a smaller number.
-6. **The same rule for retired sub-recipes**, for the same reason.
+6. **The same rule for retired sub-recipes, also in both directions:** a
+   line cannot be written onto a retired recipe, and `set_recipe_retired`
+   refuses while a live recipe uses it as a sub-recipe. The second half is
+   the one that is easy to leave out, and it is the half that matters —
+   retiring a recipe is the common operation, writing a line onto an
+   already-retired one is not.
 7. **A recipe cannot reference itself** — a check constraint, so the
    trivial cycle is caught without the recursive trigger having to run.
+
+**One implementation trap in the depth cap.** The depth of a chain is not
+the depth *below* the line being inserted. Adding "B is an ingredient of
+A" can exceed the cap through A's own ancestors: if A is already used four
+levels up someone else's recipe, a two-level B pushes the whole chain to
+six. The trigger must therefore measure `depth_above(A) + depth_below(B) +
+1`, not `depth_below(B)`. Measuring only downward would enforce the cap
+inconsistently depending on which line happened to be written last — the
+kind of bug that passes every test written from the happy path, so the
+pgTAP case is explicitly "build a legal 4-deep chain, then attach a 2-deep
+sub-recipe at the top and assert the refusal".
 
 ---
 
@@ -400,6 +443,15 @@ look like a complete answer.
 The function therefore returns, per nutrient, the value **and** a
 `complete` boolean that is false when any contributing line lacked data
 for it. The UI shows an incomplete value as "at least", not as a fact.
+
+**Three states, not two** — and collapsing them is the mistake to avoid.
+A nutrient no contributing ingredient has data for sums to zero with
+`complete = false`, and rendering that as "at least 0 µg" is worse than
+useless: it reads as a measurement. So the row is **omitted entirely**
+when nothing contributed, shown as "at least X" when some lines
+contributed, and shown plainly when all did. This matches what
+`NutritionTable` already does for ingredients, where a sparse row simply
+does not appear.
 This is the same instinct as the retired-ingredient rule: the failure mode
 being designed against is a number that is wrong without looking wrong.
 
@@ -526,7 +578,25 @@ Mirrors Phase 2 exactly:
 `upsert_recipe` is one transaction per recipe spanning six tables, for the
 same reason `upsert_ingredient` is: the re-seed path replaces companion
 rows with a delete followed by an insert, so a failure in between must not
-be able to destroy a previously-good recipe.
+be able to destroy a previously-good recipe. It is also the only write
+path for `recipe_nutrient_overrides` — an override is curated data like
+everything else here, not a separate admin action.
+
+**Four things it must get right, each of which is easy to leave out:**
+
+- **Re-seeding never un-retires a recipe.** `retired_at` is preserved
+  across an upsert, exactly as Phase 2 decided for ingredients. Otherwise
+  re-running the seed silently resurrects everything ever withdrawn.
+- **Step positions are renumbered to 1..n** from the dataset's order, so a
+  gap or a duplicate in the source file cannot reach the database.
+- **A step must exist in every locale the recipe has**, not merely in the
+  default one. Per-step fallback would otherwise produce a recipe that is
+  Catalan for four steps and Spanish for the fifth — technically valid,
+  visibly broken. The same rule applies to the title.
+- **Re-seeding replaces `recipe_steps` rows**, which changes their ids.
+  Harmless today because step progress is client-side and keyed by
+  position. It stops being harmless if progress ever becomes a stored
+  row — noted here rather than in whatever future phase discovers it.
 
 **One thing Phase 2 did not need: dependency ordering.** A recipe with a
 sub-recipe line cannot be imported before the recipe it points at. The
@@ -601,9 +671,12 @@ Refusals to assert:
 - A sub-recipe line using a unit of a different dimension from the
   sub-recipe's yield unit.
 - A self-referencing line; a two-step cycle; a three-step cycle; a
-  six-level chain.
+  six-level chain built downward **and** a legal 4-deep chain that a
+  2-deep sub-recipe is then attached to the top of (the depth trap in §3).
 - A line onto a retired ingredient; retiring an ingredient a live recipe
-  uses; a line onto a retired sub-recipe.
+  uses; a line onto a retired sub-recipe; **retiring a recipe that a live
+  recipe uses as a sub-recipe**.
+- Re-seeding a retired recipe and asserting it is still retired.
 - `upsert_recipe` with no title in any locale; with no Spanish title; with
   no lines; with a step position gap or a duplicate position.
 - `insert` / `update` / `delete` on every recipe table as `authenticated`.
@@ -805,6 +878,32 @@ and (
           and s.author_user_id = recipes.owner_user_id))
 )
 ```
+
+**Who may create a subscription row is the actual access-control
+boundary, and it is easy to miss.** The policy above grants read access to
+an author's shared recipes to anyone holding a `recipe_subscriptions` row.
+So if a user can insert that row for themselves against any author, then
+`shared` means "readable by every signed-in user who asks" and the
+`private` / `shared` distinction is the only thing left — which is not
+what the word implies. Three options, in order of preference:
+
+1. **No user-facing insert policy at all.** Subscriptions are created only
+   by `accept_household_invite` and `create_household` (both already
+   `security definer`), and deleted by the subscriber. Access follows from
+   having shared a household, which is exactly the stated requirement, and
+   there is no way to subscribe to a stranger because there is no way to
+   *find* one.
+2. Insert allowed where `subscriber_user_id = auth.uid()` **and** the two
+   people currently share a household — self-service, still bounded.
+3. Insert allowed where `subscriber_user_id = auth.uid()`, unbounded.
+   This is "follow anyone", and it needs the discovery and blocking story
+   from the pre-public-launch checklist before it is safe.
+
+**Option 1 until there is a reason to move**, since the requirement as
+stated — households subscribe each other automatically — needs no
+user-initiated subscribe at all. Unsubscribe is a delete on your own row
+(`subscriber_user_id = auth.uid()`), which is what makes leaving
+revocable.
 
 **This renames the visibility values.** `public` / `private` was written
 before subscriptions existed, and `public` would now be a lie: a user's

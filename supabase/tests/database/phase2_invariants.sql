@@ -23,7 +23,7 @@
 create extension if not exists pgtap;
 
 begin;
-select plan(90);
+select plan(91);
 
 -- Fixtures: an owner, a plain member, and a stranger, plus one household.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -817,6 +817,30 @@ select is(
                    where u.ingredient_id = i.id and un.dimension = 'count')),
   0::bigint,
   'every ingredient allowing a count unit has a unit weight'
+);
+
+-- Every function this project owns pins its search_path.
+--
+-- Written as a rule over all of them rather than a check on one, because
+-- the specific miss (upsert_ingredient) was found by an advisor run that
+-- had been skipped - so the useful guard is the one that catches the next
+-- function somebody forgets, without anyone remembering to look.
+--
+-- Extension-owned functions are excluded: pgtap itself installs into this
+-- schema, and its search_path is not ours to set.
+select is(
+  (select count(*)
+     from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.prokind = 'f'
+      and not exists (
+        select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
+      and (p.proconfig is null
+           or not exists (
+             select 1 from unnest(p.proconfig) c where c like 'search_path=%'))),
+  0::bigint,
+  'every function this project owns pins its search_path'
 );
 
 select * from finish();

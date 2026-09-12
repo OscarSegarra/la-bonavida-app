@@ -776,7 +776,30 @@ Run the dev server and check by hand:
 Run the security and performance advisors against preprod after migrating.
 This is not ceremony: advisors already caught a real `PUBLIC`-grant bug in
 Phase 1 that a hand-written revoke had missed (see `DECISIONS.md`,
-2026-09-08). Expect and resolve anything flagged on the ten new tables.
+2026-09-08), and caught a second one here — `upsert_ingredient` shipped
+without a pinned `search_path`, the only function in the project missing
+it. Run them after *every* slice that migrates, not just the first: this
+one was found late because slices 4 and 5 skipped the step.
+
+**Outcome as of 2026-09-12** — security: clean, apart from three expected
+`SECURITY DEFINER` warnings for `create_household`, `accept_household_invite`
+and `get_household_invite`, which are meant to be user-callable and are
+safe for the reasons recorded in `DECISIONS.md`.
+
+Performance: four unindexed foreign keys
+(`ingredients.food_group_id`, `ingredient_nutrients.nutrient_id`,
+`ingredient_allowed_units.unit_id`, `households.region_id`), all INFO, all
+deliberately left. Three have no query that joins in that direction, and
+the parents are reference data that is never deleted. The fourth,
+`food_group_id`, does now back the browse filter — but at catalog scale an
+index saves nothing measurable, and adding one would contradict the plan
+review that removed a covering index on exactly this argument.
+
+**Explicit trigger for revisiting:** add them when the catalog passes
+roughly 5,000 ingredients, or sooner if a query actually shows up slow.
+Not "when the feature exists" — that was the wrong criterion, since the
+cost of a sequential scan depends on the table's size, not on how many
+screens read it.
 
 ---
 

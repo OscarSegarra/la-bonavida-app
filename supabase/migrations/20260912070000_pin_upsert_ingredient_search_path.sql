@@ -1,0 +1,17 @@
+-- Pins upsert_ingredient's search_path, which it should have had from the
+-- start: every other function in this project sets it, and the security
+-- advisor flagged this one as the exception.
+--
+-- Not exploitable as written - the body already qualifies every object as
+-- public.something - but "not exploitable as written" is a property of the
+-- current body, not of the function. With a mutable search_path, the first
+-- unqualified reference anyone adds later silently resolves against
+-- whatever schema the caller put first, and the caller here holds a service
+-- role. Pinning it now makes that impossible rather than unlikely.
+--
+-- Safe with an empty path because built-ins live in pg_catalog, which
+-- Postgres searches implicitly whether or not it appears in search_path.
+--
+-- Found by running the security advisor after migrating, which the Phase 2
+-- plan asks for in section 8.5 and which was skipped for slices 4 and 5.
+alter function public.upsert_ingredient(jsonb) set search_path = '';

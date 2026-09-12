@@ -1,5 +1,5 @@
 import { useTranslations } from "next-intl";
-import { groupMonthsIntoRuns } from "../domain/nutrition";
+import { groupMonthsIntoRuns } from "../domain/seasonality";
 import type { IngredientDetail } from "../data/ingredients";
 
 /**

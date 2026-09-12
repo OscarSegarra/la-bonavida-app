@@ -136,6 +136,10 @@
     "tbsp": "cda.",
     "tsp": "cdta."
   },
+  "nutrition": {
+    "per100g": "por 100 g",
+    "per100ml": "por 100 ml"
+  },
   "nutrients": {
     "energy_kj": "Energía (kJ)",
     "energy_kcal": "Energía (kcal)",
@@ -204,8 +208,6 @@
     "empty": "Todavía no hay ingredientes en el catálogo.",
     "count": "{count, plural, one {# ingrediente} other {# ingredientes}}",
     "nutrition": "Información nutricional",
-    "per100g": "por 100 g",
-    "per100ml": "por 100 ml",
     "noNutrition": "No hay datos nutricionales para este ingrediente.",
     "allergensAndDiets": "Alérgenos y dietas",
     "noTags": "Sin alérgenos ni etiquetas dietéticas.",

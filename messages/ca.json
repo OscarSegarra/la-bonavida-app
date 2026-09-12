@@ -136,6 +136,10 @@
     "tbsp": "cull.",
     "tsp": "culleradeta"
   },
+  "nutrition": {
+    "per100g": "per 100 g",
+    "per100ml": "per 100 ml"
+  },
   "nutrients": {
     "energy_kj": "Energia (kJ)",
     "energy_kcal": "Energia (kcal)",
@@ -204,8 +208,6 @@
     "empty": "Encara no hi ha ingredients al catàleg.",
     "count": "{count, plural, one {# ingredient} other {# ingredients}}",
     "nutrition": "Informació nutricional",
-    "per100g": "per 100 g",
-    "per100ml": "per 100 ml",
     "noNutrition": "No hi ha dades nutricionals per a aquest ingredient.",
     "allergensAndDiets": "Al·lèrgens i dietes",
     "noTags": "Sense al·lèrgens ni etiquetes dietètiques.",

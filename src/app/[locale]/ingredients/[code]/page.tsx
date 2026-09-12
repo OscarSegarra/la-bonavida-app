@@ -3,11 +3,8 @@ import { getTranslations } from "next-intl/server";
 import { createClient } from "@/lib/supabase/server";
 import { Link, redirect } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
-import {
-  getIngredient,
-  NutritionTable,
-  IngredientFacts,
-} from "@/modules/ingredients";
+import { NutritionTable } from "@/lib/nutrition/NutritionTable";
+import { getIngredient, IngredientFacts } from "@/modules/ingredients";
 
 /**
  * One ingredient's detail page. Server Component.
@@ -68,6 +65,7 @@ export default async function IngredientPage({
         <NutritionTable
           values={ingredient.nutrients}
           basis={ingredient.nutritionBasis}
+          emptyMessage={t("noNutrition")}
         />
       </section>
 

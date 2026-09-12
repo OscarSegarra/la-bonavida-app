@@ -11,7 +11,7 @@ module can be changed without risking breakage elsewhere.
 | Module | Owns |
 |---|---|
 | `households` | Households, household membership, roles (owner/member) |
-| `recipes` | Recipe definitions |
+| `recipes` | Recipe definitions — a global curated catalog in Phase 3, user-owned later |
 | `ingredients` | Ingredient catalog |
 | `meal-plans` | Weekly/date-based meal plans |
 | `shopping-lists` | Shopping lists and their items |
@@ -79,12 +79,25 @@ data, even via a raw query, because the database refuses the row before the
 application ever sees it. See `supabase/migrations/` for the schema, and
 `DECISIONS.md` for why RLS design choices were made the way they were.
 
-**Deliberate exception:** shared reference data that isn't private to one
-household — the global `ingredients` catalog (Phase 2) and everything that
-hangs off it (nutrients, food groups, allergens/diet tags, units) — is not
-`household_id`-scoped. It's read-only for regular users, writable only by
-the project owner. See `CLAUDE.md` and `DECISIONS.md`; this must stay a
-rare, explicitly-logged exception, not a pattern to reach for by default.
+**Deliberate exceptions, of which there are exactly two.** Shared
+reference data that isn't private to one household is not
+`household_id`-scoped: the global `ingredients` catalog (Phase 2) and
+everything hanging off it (nutrients, food groups, allergens/diet tags,
+units), and the global `recipes` catalog (Phase 3). Both are read-only for
+regular users and writable only by the project owner, through a single
+`security definer` function whose `execute` is revoked from `anon` and
+`authenticated`. That — no user write path at all — is the entire
+justification, and it is why neither needs the moderation and abuse design
+a user-writable shared table would. See `CLAUDE.md` and `DECISIONS.md`;
+this must stay a rare, explicitly-logged exception, not a pattern to reach
+for by default.
+
+**A third scope arrives with Phase 3: per-user.** A recipe may eventually
+be owned by a person (`owner_user_id`, null meaning "the global catalog"),
+and reaches other people through subscriptions rather than through
+household membership. So the app has three kinds of row — household-scoped,
+globally-curated, and user-owned — and a new table should still default to
+household-scoped unless there's a logged reason not to.
 
 Security, then simplicity, then modularity, then efficiency — in that
 priority order — wins whenever two goals conflict in this codebase.

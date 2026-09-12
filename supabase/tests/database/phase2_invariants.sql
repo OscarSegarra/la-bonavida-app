@@ -858,8 +858,14 @@ select is(
   0::bigint,
   'a retired ingredient is invisible to an authenticated reader'
 );
+-- Uses zz_up_full, NOT zz_test_milk: the cascade test above genuinely
+-- deletes the milk fixture as superuser, so by this point it does not
+-- exist and this assertion would read 0 for a reason that has nothing to
+-- do with retirement. (The earlier `delete ... zz_test_egg` is a no-op -
+-- it runs as authenticated, where a DELETE matches no rows - which is why
+-- the egg fixture is still available above.)
 select is(
-  (select count(*) from public.ingredients where code = 'zz_test_milk'),
+  (select count(*) from public.ingredients where code = 'zz_up_full'),
   1::bigint,
   'retiring one ingredient does not hide the others'
 );

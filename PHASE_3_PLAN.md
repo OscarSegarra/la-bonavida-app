@@ -315,7 +315,36 @@ It is gathered **now, during curation**, even though only the scaling UI
 reads it — the Phase 2 precedent for `density_g_per_ml` and
 `grams_per_unit`, and for the same reason: deciding it while already
 looking at the ingredient is free, and revisiting the whole catalog later
-is a second research pass. What it drives is in §6.1.
+is a second research pass. What it drives is in §6.2.
+
+**This takes two migrations, not one, and the split is load-bearing.** The
+column is added by one migration, but its *values* come from the seed
+dataset rather than from SQL, because they are curated data that belongs
+next to the ingredient it describes. So the rule requiring the column to
+be filled cannot be switched on in the same breath as the column
+appearing: at that instant every existing row is null and the catalog
+fails its own new invariant. The order is **create → seed → alter**, the
+same sequencing the Phase 2 review made explicit for
+`households.region_id`:
+
+1. `20260912120000` adds the column and the convertibility rule
+2. `pnpm run seed:ingredients` fills it for all 62 ingredients
+3. `20260912130000` starts requiring it
+
+On a fresh database — CI, or a new environment — there are no ingredients
+when step 3 runs, so its check passes vacuously and both migrations apply
+back to back. Only an already-populated environment needs the seed run in
+between, and the migration says so in the exception it raises.
+
+**Both rules are enforced by `deferrable initially deferred` constraint
+triggers**, on both `ingredients` and `ingredient_allowed_units`. The
+deferral is not incidental: `upsert_ingredient` updates the parent row
+*before* replacing the allowed units, so an immediate check would compare
+a new density against the old unit set and reject an upsert that is
+perfectly valid once finished. Triggers sit on both tables because either
+side can break the rule — nulling a factor, or allowing a unit that needs
+one. There is deliberately no trigger on delete: removing an allowed unit
+can only ever make an ingredient more convertible.
 
 ### 2.7 Indexes
 

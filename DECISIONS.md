@@ -1658,3 +1658,42 @@ environment variables have to be set by hand whenever the cutover
 happens, regardless of which path is taken to a prod database.
 
 ---
+
+## 2026-09-12 — The launch path is to retire the old app, not to upgrade
+
+**Context:** the previous entry left two ways to free a Supabase project
+slot — retire the old live app, or move to Pro — and deferred choosing
+between them. Choosing now, while nothing depends on it, is cheaper than
+choosing under launch pressure.
+
+**Decision:** when this app is ready, the old one is retired and its
+Supabase slot is reused for `la-bonavida-prod`. No Pro upgrade.
+
+**What "ready" means, concretely:** the new app can do what the old one
+does for the people using it. That is a product judgement rather than a
+phase number, but it is certainly not now — recipes, meal plans and
+shopping lists are all still ahead.
+
+**Why this rather than Pro:** paying monthly to run two backends in
+parallel only buys the ability to defer the decision. The old app is
+being replaced, not kept, so the slot it holds is the slot this one
+should end up in. The cost of waiting is zero: `develop` ships to preview
+deployments against preprod on every PR.
+
+**What this rules out, deliberately:** treating the old app as something
+to keep running indefinitely alongside the new one. It has a scheduled
+end, and the two never need to coexist in production.
+
+**Sequence when the time comes** (none of it is reversible in a hurry, so
+it belongs in one deliberate session rather than bolted onto a feature
+PR):
+1. Confirm the new app covers the old one's real uses.
+2. Export anything worth keeping from the old project.
+3. Pause the old Supabase project, freeing the slot.
+4. Create `la-bonavida-prod`, apply every migration, seed reference data.
+5. Set the Vercel Production environment variables **by hand** — the
+   project config is not readable from an agent session (403).
+6. Merge `develop` into `main`, and verify the deploy before pointing any
+   domain at it.
+
+---

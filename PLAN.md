@@ -96,21 +96,42 @@ reasoning) — this replaces the original bullet list:
 ## Phase 2 — Ingredients
 
 **Status: built**, merged to `develop` across five PRs (#5 reference
-schema, #6 ingredient schema, #8 i18n, #9 seed pipeline, #10 browse UI).
-Migrations applied to preprod; typecheck, lint, 40 unit tests, 109 pgTAP
-assertions and the production build all pass. Three gaps at merge time,
-flagged rather than quietly assumed fine:
+schema, #6 ingredient schema, #8 i18n, #9 seed pipeline, #10 browse UI),
+plus a post-build review pass that fixed three real defects and four
+smaller gaps. Migrations applied to preprod; typecheck, lint, 90 unit
+tests, 136 pgTAP assertions and the production build all pass.
+
+**All 62 ingredients are loaded in preprod** and every seed-sanity
+invariant returns clean.
+
+**The post-build review** (see `DECISIONS.md`, "Phase 2 post-build
+review") found that two verification passes had both asked "does the
+planned work exist?" and neither had asked "what would a bug here look
+like?". Three defects had passed every existing test:
+`upsert_ingredient` accepted an ingredient with no name in any language;
+nothing anywhere required the EU-mandatory nutrients (all 62 had them by
+curation, not by rule); and the food-group filter only worked because of
+a null check that read as a type guard. All three are fixed, with
+assertions that fail if they come back. The method that found them —
+call each write path with what it should refuse — is now the habit for
+Phase 3.
+
+Remaining gaps, flagged rather than quietly assumed fine:
 
 - **The seed dataset is 62 ingredients, not the 150–250 targeted.** All
-  13 food groups are covered and every entry carries the seven EU
-  mandatory declarations, so the pipeline and the data shape are proven;
-  reaching the target is continued curation on working, re-runnable
-  infrastructure rather than new engineering.
-- **The full seed has not been applied to preprod.** A representative
-  8-ingredient subset is loaded — chosen to exercise count units,
-  density, wraparound seasonality, allergens and per-100 ml. Applying the
-  rest needs `SUPABASE_SERVICE_ROLE_KEY` set locally, then
-  `pnpm run seed:ingredients`.
+  13 food groups are covered and every entry carries all eight
+  EU-mandatory nutrient values (the seven required declarations, with
+  energy stored in both kJ and kcal) — now enforced by the importer and
+  by a pgTAP invariant rather than left to careful curation. Reaching the
+  target is continued curation on working, re-runnable infrastructure
+  rather than new engineering.
+- **Search is accent-tolerant but not typo-tolerant.** "platano" finds
+  "Plátano"; "platno" does not. Matching happens in the application after
+  fetching the catalog, which is correct and fast at this size — the known
+  ceiling is the ~5,000-ingredient figure in `PHASE_2_PLAN.md` §8.5.
+  Pushing search into Postgres needs the `unaccent` extension plus an
+  index, which is the same job as real typo tolerance, so both wait for
+  whichever is needed first.
 - **Verification used a temporary password user**, since this environment
   has no email inbox for the magic-link flow. Pages were rendered in all
   three locales against preprod and the user was removed afterwards, but
@@ -132,6 +153,14 @@ The bullets below stay the roadmap-level summary.
   revoked from `anon` and `authenticated`. Since there's no user-write
   path, there's no duplicate/moderation/abuse problem to design around at
   all. See `DECISIONS.md`.
+- **Withdrawing an ingredient is a retirement, not a delete.**
+  `set_ingredient_retired(code, true)` stamps `retired_at` and the
+  `ingredients_select` policy hides the row from readers, while the row
+  itself survives so anything already referencing it keeps resolving —
+  which is what makes it safe once Phase 3 recipes hold a foreign key to
+  the catalog. Re-running the seed never un-retires anything. The importer
+  reports live codes missing from the dataset but never acts on them. See
+  `DECISIONS.md`.
 - **Nutrition values:** the full EU-standard set (Regulation 1169/2011
   Annex XIII — 7 mandatory macros, 5 voluntary macros, ~13 vitamins, ~14
   minerals), stored **normalized**: a seeded `nutrients` reference table

@@ -41,18 +41,43 @@ export function groupNutrientsByCategory(values: NutrientValue[]): NutrientGroup
 }
 
 /**
- * Formats a nutrient amount for display.
+ * Formats a nutrient amount for display in a given language.
  *
- * Trailing zeros are trimmed so a label reads "3.2 g" and "0 g" rather
- * than "3.20 g" and "0.00 g", and very small amounts keep enough precision
+ * Trailing zeros are trimmed so a label reads "3,2 g" and "0 g" rather
+ * than "3,20 g" and "0,00 g", and very small amounts keep enough precision
  * to stay meaningful - micronutrients are often below 0.1 of their unit.
+ *
+ * The locale is not optional, because the decimal separator is not a
+ * cosmetic choice: Spanish and Catalan write 3,2 where English writes 3.2,
+ * and a nutrition label showing the wrong one reads as a foreign document.
+ * Everything else in this app is translated; a bare `toFixed` quietly was
+ * not. `Intl.NumberFormat` also groups thousands the local way, which
+ * matters here because energy in kJ runs to four digits.
  * @param amount The value to format.
  * @param measureUnit The unit it is expressed in.
- * @returns A display string such as `"3.2 g"`.
+ * @param locale The BCP 47 locale to format the number for.
+ * @returns A display string such as `"3,2 g"` in Spanish or `"3.2 g"` in English.
  */
-export function formatNutrientAmount(amount: number, measureUnit: string): string {
-  const rounded = Math.abs(amount) < 1 ? Number(amount.toPrecision(2)) : Number(amount.toFixed(1));
-  return `${rounded} ${measureUnit}`;
+export function formatNutrientAmount(
+  amount: number,
+  measureUnit: string,
+  locale: string,
+): string {
+  // Round first, format second. Doing it the other way round would leave
+  // maximumFractionDigits to decide precision, which cannot express "two
+  // significant figures below 1" - and that is the rule micronutrients
+  // need, where 0.0005 mg must not collapse to 0.
+  const rounded =
+    Math.abs(amount) < 1 ? Number(amount.toPrecision(2)) : Number(amount.toFixed(1));
+
+  // maximumFractionDigits has to be raised from its default of 3, or the
+  // very small values the rounding above went to the trouble of keeping
+  // would be thrown away again here.
+  const formatted = new Intl.NumberFormat(locale, {
+    maximumFractionDigits: 20,
+  }).format(rounded);
+
+  return `${formatted} ${measureUnit}`;
 }
 
 /**

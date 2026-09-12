@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import type { NutrientCategory } from "../domain/nutrition";
 import { resolveTranslation } from "../domain/translations";
+import { matchesSearch } from "../domain/search";
 
 type Client = SupabaseClient<Database>;
 
@@ -44,9 +45,13 @@ function toName(
  * Lists the catalog, optionally filtered.
  *
  * One query, never N+1: translations are embedded rather than fetched per
- * ingredient. Search runs against the requested locale's names *and* the
- * default locale's, so a Catalan speaker typing a Spanish name still finds
- * the ingredient - the catalog is only partly translated in practice.
+ * ingredient. Search matching lives in `domain/search` - it runs against
+ * every language the ingredient has and against its code, accent- and
+ * case-insensitively.
+ *
+ * Retired ingredients never appear here, and that is enforced by the
+ * ingredients_select policy rather than by a filter in this query - so a
+ * new query somewhere else cannot forget it.
  * @param supabase A Supabase client scoped to the current request.
  * @param options Active locale, default locale, and optional filters.
  * @returns Matching ingredients, sorted by display name.
@@ -68,10 +73,18 @@ export async function listIngredients(
 ): Promise<IngredientSummary[]> {
   const { locale, defaultLocale, search, foodGroupCode, dietaryTagCodes } = options;
 
+  // `!inner` is load-bearing, not decoration. Without it PostgREST applies
+  // a filter on an embedded column to the *embed* and not to the parent:
+  // the request still returns every ingredient, just with food_groups set
+  // to null on the ones that do not match. The filter then only appears to
+  // work because a later null check drops them - which makes that null
+  // check part of the filter, and therefore something a future tidy-up can
+  // silently break. An inner join filters the parent rows in Postgres,
+  // where it belongs.
   let query = supabase
     .from("ingredients")
     .select(
-      "code, food_groups(code), ingredient_translations(locale, name), ingredient_dietary_tags(dietary_tags(code))",
+      "code, food_groups!inner(code), ingredient_translations(locale, name), ingredient_dietary_tags(dietary_tags(code))",
     );
 
   if (foodGroupCode) {
@@ -81,20 +94,16 @@ export async function listIngredients(
   const { data, error } = await query;
   if (error) throw error;
 
-  const term = search?.trim().toLowerCase();
+  const term = search ?? "";
   const requiredTags = dietaryTagCodes?.filter(Boolean) ?? [];
 
   return data
-    .filter((row) => row.food_groups !== null)
-    // Matching runs against every language the ingredient has, not just
-    // the one being displayed: the catalog is only partly translated, so a
-    // Catalan speaker typing a Spanish name should still find it.
-    .filter(
-      (row) =>
-        !term ||
-        (row.ingredient_translations ?? []).some((t) =>
-          t.name.toLowerCase().includes(term),
-        ),
+    .filter((row) =>
+      matchesSearch(
+        term,
+        row.code,
+        (row.ingredient_translations ?? []).map((t) => t.name),
+      ),
     )
     // Requires every selected tag, not any of them: picking "vegan" and
     // "gluten-free" together should narrow the list, which is what someone
@@ -110,7 +119,9 @@ export async function listIngredients(
     })
     .map((row) => ({
       code: row.code,
-      foodGroupCode: row.food_groups!.code,
+      // No `!` needed: the inner join above makes this non-null in the
+      // type as well as in fact.
+      foodGroupCode: row.food_groups.code,
       ...toName(row.ingredient_translations ?? [], locale, defaultLocale),
     }))
     .sort((a, b) => a.name.localeCompare(b.name, locale));
@@ -122,6 +133,10 @@ export async function listIngredients(
  * Keyed on `code`, not `id`: `code` is the ingredient's stable identity,
  * so a detail URL keeps working after the catalog is re-seeded into a
  * fresh environment, where surrogate ids would differ.
+ *
+ * A retired ingredient returns `null` here and so renders as not found.
+ * That falls out of the ingredients_select policy rather than a filter in
+ * this query - the row is simply not visible to an authenticated reader.
  * @param supabase A Supabase client scoped to the current request.
  * @param code The ingredient's stable slug.
  * @param options Active locale and default locale for name resolution.

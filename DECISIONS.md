@@ -1697,3 +1697,105 @@ PR):
    domain at it.
 
 ---
+
+## 2026-09-12 — Retirement, not deletion, is how an ingredient leaves the catalog
+
+**Context:** a post-build review of Phase 2 found that the catalog had no
+removal path at all. The seed importer only ever upserts, so deleting an
+entry from `data/ingredients.ts` left the row live in the database
+forever, with nothing anywhere reporting the difference. For a catalog
+whose entire justification is admin control, "withdraw a mistake" was the
+one operation missing.
+
+**Decision:** ingredients gain a nullable `retired_at`, set through a new
+`public.set_ingredient_retired(_code, _retired)` function. Retired rows
+stay in the table and are hidden from readers by the `ingredients_select`
+policy.
+
+**Why not a real DELETE:** Phase 3 gives recipe lines a foreign key to
+these rows. From that point a DELETE either cascades into somebody's saved
+recipe or is refused by the constraint — and neither is the thing we
+actually want, which is "stop offering this, leave what already references
+it intact". Choosing the soft flag now costs one nullable column; choosing
+it after Phase 3 would mean migrating recipe data.
+
+**Why a timestamp rather than a boolean:** "when did this leave the
+catalog" is the question anyone debugging a missing ingredient asks first,
+and a boolean cannot answer it. The cost is the same one byte of thought.
+
+**Why the policy hides it rather than each query filtering:** a `WHERE
+retired_at IS NULL` in `listIngredients` is a thing the next query can
+forget. A policy is applied by Postgres to every authenticated read, no
+matter who writes it later. This is the same reasoning as the rest of the
+RLS model — enforce in the database, not in the callers.
+
+**Why re-seeding does not un-retire:** `upsert_ingredient` deliberately
+leaves `retired_at` alone. Re-running the seed is meant to be the safe
+operation; quietly resurrecting something an admin withdrew would make it
+the opposite. Un-retiring is an explicit second act, and is asserted in
+pgTAP.
+
+**Why the importer reports rather than acts:** a seed run now lists live
+codes absent from the dataset and tells you how to retire them, but never
+retires anything itself. Withdrawing an ingredient is a decision; a seed
+run that retired things because somebody was mid-edit would be worse than
+the gap it closes.
+
+---
+
+## 2026-09-12 — Phase 2 post-build review: what the tests were not asking
+
+**Context:** Phase 2 was verified complete twice, both times by checking
+that the planned work existed. A third pass asked a different question —
+"what would a bug here look like?" — and found seven things, three of them
+real defects. Worth recording because the *pattern* is the lesson, not the
+individual fixes.
+
+**The three that were actual bugs, and what they have in common:**
+
+1. **`upsert_ingredient` accepted a nameless ingredient.** The function
+   raised a named error for an unknown food group, nutrient, tag, unit or
+   region, for zero allowed units, and for a default unit outside the
+   allowed list. It never looked at `names`. Found by *calling* it with
+   `"names":{}` — it returned a new id.
+2. **Nothing enforced EU-mandatory nutrients.** All 62 ingredients had all
+   eight, so every check passed. But nothing required it: the schema
+   cannot express "which rows exist", `upsert_ingredient` only checks that
+   codes resolve, and the importer's validator did not ask. Completeness
+   was curation luck.
+3. **The food-group filter worked by accident.** PostgREST applies a
+   filter on an embedded column to the *embed*, not the parent — the
+   request returned all 62 rows with `food_groups` nulled on the 53
+   non-matches. What implemented the filter was a later
+   `.filter(row => row.food_groups !== null)` that reads as a
+   type-narrowing guard. Deleting that "redundant" line would have turned
+   the filter into a no-op with no test failing. Fixed with `!inner`, which
+   filters in Postgres where it belongs.
+
+**What they have in common:** every one passed every test that existed,
+because the tests asserted that the feature was present and these were all
+failures of *absence* — a check not written, a rule not stated, a filter
+that appeared to work. Coverage of the happy path says nothing about them.
+
+**The method that found them, for reuse:** probe the live thing with input
+it should refuse, rather than reading the code and reasoning about it. The
+nameless ingredient took one SQL call to prove and would have survived any
+amount of re-reading — the code *looks* thorough, and is, about everything
+it thought of.
+
+**Adopted as a habit for Phase 3:** for each write path, write down what it
+must refuse, then call it with each of those and watch it refuse. An
+invariant nobody has seen fail is an invariant nobody has tested.
+
+**Also fixed, less severe:** accent-blind search (26 of 186 names carry an
+accent, so "platano" found nothing), unlocalised numbers (`3.2 g` in a
+Spanish page that writes `3,2 g`), and a validator that required a density
+for mass+volume but not for count+volume.
+
+**One thing deliberately not fixed:** `listIngredients` still fetches the
+whole catalog and filters in JS. Correct and fast at 62 rows, and the
+`!inner` change moves the food-group filter into Postgres. The known
+ceiling is the ~5,000-ingredient figure in `PHASE_2_PLAN.md` §8.5; pushing
+search server-side needs the `unaccent` extension and an index, which is
+the same work as real typo tolerance. Left as one job for when either is
+actually needed, rather than half-done now.

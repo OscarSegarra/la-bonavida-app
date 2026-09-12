@@ -1,4 +1,4 @@
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import {
   groupNutrientsByCategory,
   formatNutrientAmount,
@@ -26,6 +26,9 @@ export function NutritionTable({
 }) {
   const t = useTranslations("Ingredients");
   const tNutrients = useTranslations("nutrients");
+  // Amounts are numbers, and numbers are written differently per language:
+  // 3,2 g in Spanish and Catalan, 3.2 g in English.
+  const locale = useLocale();
 
   if (values.length === 0) {
     return (
@@ -68,7 +71,7 @@ export function NutritionTable({
                     {tNutrients(value.code)}
                   </th>
                   <td className="py-1 text-right tabular-nums text-black dark:text-zinc-50">
-                    {formatNutrientAmount(value.amount, value.measureUnit)}
+                    {formatNutrientAmount(value.amount, value.measureUnit, locale)}
                   </td>
                 </tr>
               )),

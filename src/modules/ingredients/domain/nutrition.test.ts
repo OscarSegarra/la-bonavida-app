@@ -49,14 +49,40 @@ describe("groupNutrientsByCategory", () => {
 
 describe("formatNutrientAmount", () => {
   it("trims trailing zeros", () => {
-    expect(formatNutrientAmount(3.2, "g")).toBe("3.2 g");
-    expect(formatNutrientAmount(0, "g")).toBe("0 g");
-    expect(formatNutrientAmount(100, "g")).toBe("100 g");
+    expect(formatNutrientAmount(3.2, "g", "en")).toBe("3.2 g");
+    expect(formatNutrientAmount(0, "g", "en")).toBe("0 g");
+    expect(formatNutrientAmount(100, "g", "en")).toBe("100 g");
   });
 
   it("keeps precision on micronutrient-sized amounts", () => {
-    expect(formatNutrientAmount(0.03, "mg")).toBe("0.03 mg");
-    expect(formatNutrientAmount(0.001, "mg")).toBe("0.001 mg");
+    expect(formatNutrientAmount(0.03, "mg", "en")).toBe("0.03 mg");
+    expect(formatNutrientAmount(0.001, "mg", "en")).toBe("0.001 mg");
+  });
+
+  // The reason this function takes a locale at all. A Spanish nutrition
+  // label writes 3,2 g; rendering 3.2 g makes a translated page look like
+  // an untranslated one.
+  it("uses the decimal separator the language actually uses", () => {
+    expect(formatNutrientAmount(3.2, "g", "es")).toBe("3,2 g");
+    expect(formatNutrientAmount(3.2, "g", "ca")).toBe("3,2 g");
+    expect(formatNutrientAmount(3.2, "g", "en")).toBe("3.2 g");
+  });
+
+  it("keeps small amounts intact in every locale", () => {
+    expect(formatNutrientAmount(0.001, "mg", "es")).toBe("0,001 mg");
+    expect(formatNutrientAmount(0.03, "mg", "ca")).toBe("0,03 mg");
+  });
+
+  // Energy in kJ is four digits for most fats and oils, so grouping is
+  // reachable in real data rather than hypothetical.
+  it("groups thousands the way the locale does", () => {
+    expect(formatNutrientAmount(3389, "kJ", "en")).toBe("3,389 kJ");
+    expect(formatNutrientAmount(3389, "kJ", "es")).toBe("3389 kJ");
+  });
+
+  it("still trims to one decimal above 1 regardless of locale", () => {
+    expect(formatNutrientAmount(91.64, "g", "es")).toBe("91,6 g");
+    expect(formatNutrientAmount(91.64, "g", "en")).toBe("91.6 g");
   });
 });
 

@@ -94,11 +94,11 @@ profile. `on delete restrict` means deleting a person is blocked while
 they own recipes — deliberate, and the same stance Phase 1 took on the
 sole owner of a household.
 
-**`min_servings` is what makes scaling honest.** A recipe can be scaled to
-however many people are eating, but not every recipe scales down: you
-cannot make a pie for one. The floor is a property of the recipe, so it is
-stated by whoever writes it, and the scaling control simply will not go
-below it. `not null` with a default of 1 means most recipes say nothing
+**`min_servings` is one of the two things that filter the offered sizes**
+(§6.2 has the other). Not every recipe scales down: you cannot make a pie
+for one, however neatly the arithmetic works out. The floor is a property
+of the recipe, so it is stated by whoever writes it, and no smaller size
+is ever offered. `not null` with a default of 1 means most recipes say nothing
 and behave as before, and the check ties it to `servings` so a recipe
 cannot declare a floor above its own stated yield. There is deliberately
 no `max_servings` — a paella for forty is a real limit too, but nobody has

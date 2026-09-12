@@ -2149,9 +2149,15 @@ so that the cook can mark which ones they have already done.
 
 **Decision:** `recipe_steps` (one row per step, ordered) with a
 `recipe_step_translations` companion, following the same translation
-pattern as everything else. The tick state is **React state in a Client
-Component and nothing else** — it does not survive a reload and is not
-stored anywhere.
+pattern as everything else. The tick state stays **entirely on the
+client** — no table, no RLS, nothing the server ever sees.
+
+> **Amended the same day, after the user-perspective review below:** the
+> ticks are kept in `localStorage` rather than in React state alone, so
+> they survive a reload. Everything this entry argues against — a stored
+> row, a sync question, a reset rule — still stands; what changed is only
+> that "as long as the cooking lasts" turned out to be longer than a page
+> lives on a phone that goes to sleep.
 
 **Why steps are rows and not a text blob with newlines:** ticking a step
 requires the step to have an identity. A JSON array inside the translation
@@ -2223,3 +2229,70 @@ early only what gets expensive later".
 global (curated by us, like the catalog) or belongs to a user. If
 user-owned, it is a user-writable resource and the growth-trajectory rule
 applies.
+
+---
+
+## 2026-09-12 — Reviewing the Phase 3 plan as a user, not as its author
+
+**Context:** the plan was reviewed twice more before any code — once
+hunting design defects, and once asking "what would using this actually be
+like?". The first pass is the habit the Phase 2 post-build review
+established. The second is new, and produced the more interesting
+findings: a plan can be internally consistent and still describe an app
+nobody enjoys using.
+
+**Five decisions came out of it.**
+
+**1. Allergens and diets are no longer deferred with nutrition.** The
+plan had all derived facts waiting for Phase 3b alongside the roll-up.
+That was wrong on two counts: they are set operations over the lines with
+no unit arithmetic, so they are far cheaper than the thing they were
+bundled with, and a browsable recipe catalog that cannot say whether a
+dish contains gluten is a trust and safety problem rather than a missing
+convenience. They ship in Phase 3; only the nutrition *totals* wait.
+
+**2. Step ticks are stored in `localStorage`** — a reversal of the
+decision two entries above, made for the right reason but from the wrong
+seat. "It only needs to last as long as the cooking does" is true, and the
+mistake was assuming a page lasts that long. The real scenario is a phone
+on a kitchen counter: the screen sleeps, the browser discards the page,
+and the progress is gone precisely when it was being used. `localStorage`
+fixes it while conceding nothing the original decision was protecting —
+still no table, no RLS, no "does my partner see my ticks", device-local
+and self-expiring. What it is *not* is a sync feature, and it is still not
+a stored row.
+
+**3. Recipes are scalable, with a per-recipe `min_servings` floor.**
+Scaling is the most-used feature of any recipe app and is pure
+presentation arithmetic. The floor came from the user and is the part that
+would have been missed: some recipes do not scale down at all, because you
+cannot make a pie for one. It is `not null default 1` with a check
+against `servings`, so most recipes say nothing. No `max_servings` yet —
+a paella for forty is the same argument, and the same one-line fix when
+someone hits it.
+
+**4. Search covers ingredients, not just names.** "What can I make with
+chicken" is the second thing anyone tries, and `recipe_lines` already
+holds the answer, so it is a join rather than new schema.
+
+**5. Single-ingredient recipes are hidden from the browse list, and being
+a "basic" is derived rather than tagged.** Treating an apple or a glass of
+milk as a recipe is what lets a meal plan avoid a second concept, but it
+fills the catalog with entries that crowd out real dishes. **One line and
+no steps** already means "basic", so deriving it needs no tagging
+discipline and cannot drift out of sync — and a real dish always has at
+least one step. A tag stays available as an override if a counterexample
+ever shows up.
+
+**Also settled, smaller:** ingredient and sub-recipe lines both link
+through to their own pages, because naming something the app has a page
+for and not linking to it is a dead end; the yield is not displayed at
+all, since it is plumbing for sub-recipe arithmetic and only invites
+confusion next to "Serves 4"; and the empty state says explicitly that
+recipes are curated for now, because an app with no "add" button and no
+explanation reads as broken rather than deliberate.
+
+**The lesson worth keeping:** the design review found defects in rules,
+and the user review found absences — features that were never wrong
+because they were never written down. Neither pass would have found the
+other's list.

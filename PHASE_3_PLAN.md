@@ -28,12 +28,17 @@ tested. Every reversal that follows from that is recorded in
 - **Recipe lines** that reference *either* a catalog ingredient *or*
   another recipe, with units validated differently per branch.
 - A separate, hand-applied **tag** vocabulary.
+- **Derived allergen and diet facts**, and filtering by them. These are
+  *not* deferred with the rest of the nutrition work: they are set
+  operations over the lines with no unit arithmetic, and a recipe catalog
+  that cannot tell someone whether a dish contains gluten is a trust
+  problem rather than a missing nicety.
 - Everything the nutrition roll-up will need, but **not the roll-up
-  itself** — see §4. Recursive nutrition, per-nutrient overrides and
-  derived diet/allergen facts are Phase 3b, gated on the catalog staying
-  small until they exist.
+  itself** — see §4. Recursive nutrition totals and per-nutrient overrides
+  are Phase 3b, gated on the catalog staying small until they exist.
 - **Retirement, not deletion**, matching the ingredient catalog.
-- Browse, search and detail UI in all three locales.
+- Browse, search (by name **and by ingredient**) and detail UI in all
+  three locales, with scaling to a different number of servings.
 
 **Deliberately not in Phase 3** (§11 has the full list): user-written
 recipes — the ownership columns land now, the feature does not —
@@ -58,6 +63,8 @@ create table public.recipes (
   visibility     text not null default 'shared'
                    check (visibility in ('private', 'shared')),
   servings       integer not null check (servings > 0),
+  min_servings   integer not null default 1
+                   check (min_servings > 0 and min_servings <= servings),
   yield_quantity numeric not null check (yield_quantity > 0),
   yield_unit_id  bigint not null references public.units (id),
   retired_at     timestamptz null,
@@ -84,6 +91,16 @@ following the Phase 1 rule that participation in app data requires a
 profile. `on delete restrict` means deleting a person is blocked while
 they own recipes — deliberate, and the same stance Phase 1 took on the
 sole owner of a household.
+
+**`min_servings` is what makes scaling honest.** A recipe can be scaled to
+however many people are eating, but not every recipe scales down: you
+cannot make a pie for one. The floor is a property of the recipe, so it is
+stated by whoever writes it, and the scaling control simply will not go
+below it. `not null` with a default of 1 means most recipes say nothing
+and behave as before, and the check ties it to `servings` so a recipe
+cannot declare a floor above its own stated yield. There is deliberately
+no `max_servings` — a paella for forty is a real limit too, but nobody has
+hit it, and it is the same one-line addition whenever they do.
 
 **Both `servings` and `yield_*` are required, and they are different
 numbers.** `servings` is how many people the recipe feeds and is what
@@ -368,9 +385,15 @@ sub-recipe at the top and assert the refusal".
 
 ## 4. Nutrition: the exact arithmetic
 
-> **Deferred to Phase 3b, with a hard gate.** The requirement is that the
-> *system* is in place, not that it runs from day one. Everything in this
-> section is a `create function` and a `create table` against a catalog
+> **§4.1 and §4.2 are deferred to Phase 3b, with a hard gate. §4.3 is
+> not** — the derived allergen and diet facts ship in Phase 3, because
+> they need no unit arithmetic at all (they are a union and an
+> intersection over the same recursive walk) and because a catalog that
+> cannot answer "does this contain gluten" is not safe to browse.
+>
+> The requirement for the rest is that the *system* is in place, not that
+> it runs from day one. Everything in §4.1–4.2 is a `create function` and
+> a `create table` against a catalog
 > that already has the right shape — no backfill, no data migration, no
 > rewrite of anything Phase 3 ships. So it waits.
 >
@@ -497,13 +520,15 @@ ingredients, with an asymmetry that is easy to get backwards:
 
 ```
 src/modules/recipes/
-  data/recipes.ts     listRecipes, getRecipe(code), searchRecipes
-  data/nutrition.ts   one rpc() call per recipe
-  domain/nutrition.ts presentation helpers (per-serving rounding, "at least" labelling)
+  data/recipes.ts     listRecipes, getRecipe(code), searchRecipes (name + ingredient)
+  data/nutrition.ts   one rpc() call per recipe                      [3b]
+  domain/scaling.ts   line quantities for a target serving count
   domain/search.ts    matching over already-fetched rows
-  ui/RecipeList.tsx   list + filters (server)
-  ui/RecipeSteps.tsx  the tickable step list ('use client')
-  ui/RecipeLines.tsx  ingredient / sub-recipe lines (server)
+  domain/basics.ts    isBasic(recipe): one line, no steps
+  ui/RecipeList.tsx   list + filters, basics hidden by default (server)
+  ui/RecipeSteps.tsx  the tickable step list, localStorage-backed ('use client')
+  ui/ServingsPicker.tsx  scale control, floored at min_servings ('use client')
+  ui/RecipeLines.tsx  ingredient / sub-recipe lines, both linked (server)
   index.ts            the only file anything outside the module may import
 ```
 
@@ -538,6 +563,58 @@ to nutrient display look like an ingredients change.
 
 Both moves are pure relocations with no behaviour change, so they belong
 in the first Phase 3 PR, before anything depends on them.
+
+### 6.1 What the UI actually does
+
+Settled in a user-perspective review of this plan, where each of these was
+either a missing feature or something that would read as a bug.
+
+**The browse list hides "basics" by default.** Treating a piece of fruit
+or a glass of milk as a recipe is deliberate — it is what lets a meal plan
+say "breakfast: an apple" without a second concept, and why Phases 5 and 6
+only ever deal in recipes. But it means the catalog fills with
+single-ingredient entries, and a list where *Manzana* outnumbers *Paella
+valenciana* is a bad list. **A basic is derived, not tagged: exactly one
+line and no steps.** That is already what the word means, so there is no
+tagging discipline to keep up and nothing to drift. A toggle shows them,
+search always finds them, and meal plans use them normally. If a
+counterexample ever appears, a `basico` tag can override the derivation
+without a migration — but a real dish has at least one step, so it should
+not.
+
+**Search covers names and ingredients.** "What can I make with chicken" is
+the second thing anyone tries, and `recipe_lines` already holds the
+answer — it is a join, not new schema. Name matching reuses the shared
+accent-folding helper.
+
+**Filtering is by tag, allergen and diet**, which is why the derived facts
+(§4.3) cannot wait for 3b.
+
+**On a recipe page:**
+
+- **Every ingredient line links to that ingredient's page**, and every
+  sub-recipe line links to that recipe. A line that names something the
+  app already has a page for and does not link to it is a dead end.
+- **The yield is not shown.** `yield_quantity` is plumbing for sub-recipe
+  arithmetic; "Serves 4" and "Yield 750 g" side by side only invites the
+  question of which one matters.
+- **Servings are scalable**, down to `min_servings` and no further. Line
+  quantities are multiplied by `target / servings` — pure presentation
+  arithmetic on already-fetched rows, so it belongs in
+  `domain/scaling.ts` with a unit test, not in SQL. Scaled amounts are
+  rounded for display only; the underlying numbers are untouched.
+- **Steps are ticked off, and the ticks survive a reload** via
+  `localStorage` keyed by recipe. The scenario this feature exists for is
+  cooking with a phone on the counter, where the screen sleeps and the
+  page gets discarded — losing progress exactly then would read as a bug.
+  `localStorage` keeps it device-local with no table, no RLS, and no "does
+  my partner see my ticks" question to answer. Wrapped in try/catch, since
+  a private window can refuse it.
+
+**The empty state says why you cannot add a recipe.** Curated-for-now is a
+deliberate decision, and an app that simply has no "add" button reads as
+one that is broken or unfinished. A request flow joins the same deferred
+list as ingredient requests.
 
 ---
 
@@ -633,22 +710,26 @@ Each step is a PR, in this order, mirroring how Phase 2 was sliced:
 3. **Recipe schema + RLS** (§2.1–2.5, §5) — tables, constraints, policies.
 4. **Invariant triggers** (§3) — units, cycles, depth, retirement.
 5. **`upsert_recipe` + `set_recipe_retired`** (§8).
-6. **Seed pipeline** (§8) — types, validator, importer, dataset.
-7. **UI** (§6) — list, search, detail, tickable steps.
+6. **Derived diet/allergen facts** (§4.3) — the recursive walk to leaf
+   ingredients, union for allergens, intersection for diets. Ahead of the
+   seed pipeline because the dataset should be checked against it.
+7. **Seed pipeline** (§8) — types, validator, importer, dataset.
+8. **UI** (§6, §6.1) — list with basics hidden, search by name and
+   ingredient, allergen/diet filters, detail page with linked lines,
+   servings scaling, tickable steps.
 
-Steps 2–5 are testable entirely from pgTAP with no UI at all, which is
+Steps 2–6 are testable entirely from pgTAP with no UI at all, which is
 where most of this phase's risk lives.
 
 **Phase 3b — before the catalog passes ~25 recipes** (§4):
 
-8. **Nutrition function** — recursive totals, per-nutrient overrides,
+9. **Nutrition function** — recursive totals, per-nutrient overrides,
    completeness flag.
-9. **Derived diet/allergen facts** — the same recursive walk.
 10. **Nutrition UI** — the panel on a recipe's page, reusing
     `src/lib/nutrition/` from step 1.
 
-Nothing in 8–10 alters a table Phase 3 created, which is the whole reason
-they can wait.
+Neither alters a table Phase 3 created, which is the whole reason they can
+wait.
 
 ---
 
@@ -700,8 +781,17 @@ and ship in Phase 3:
 - An override replacing exactly one nutrient and leaving the rest
   computed.
 - An override on a *sub*-recipe flowing upward into its parent.
-- `complete = false` where a contributing ingredient lacks a nutrient.
-- Allergens union, diets intersection, both through a sub-recipe.
+- `complete = false` where a contributing ingredient lacks a nutrient, and
+  the row omitted entirely where nothing contributed.
+
+Derived-facts assertions, which ship in **Phase 3**, not 3b:
+
+- Allergens are a union: one gluten-containing leaf makes the whole recipe
+  contain gluten, including through a sub-recipe two levels down.
+- Diets are an intersection: a recipe is vegan only when every leaf is,
+  and one non-vegan leaf anywhere removes the label.
+- A recipe whose only non-vegan ingredient sits inside a sub-recipe is
+  still not vegan — the case a non-recursive implementation gets wrong.
 
 Seed-sanity assertions: every recipe has all three locales; every recipe
 has at least one line; every referenced ingredient is live; every recipe's
@@ -710,8 +800,19 @@ steps are numbered 1..n with no gaps.
 ### 10.2 Unit tests (vitest)
 
 The dataset validator, the topological sort (including its cycle
-detection), and the presentation helpers in `domain/`. The arithmetic
-itself is SQL and is covered by pgTAP, not duplicated here.
+detection), and the presentation helpers in `domain/`. The nutrition
+arithmetic itself is SQL and is covered by pgTAP, not duplicated here.
+
+Three that earn their own cases:
+
+- **`domain/scaling.ts`** — scaling to a target serving count, including
+  the identity case (target equals `servings`), a non-integer result, and
+  a target below `min_servings`, which the function must refuse rather
+  than silently clamp.
+- **`domain/basics.ts`** — one line and no steps is a basic; one line
+  *with* steps is not; two lines and no steps is not.
+- **`min_servings`** as a pgTAP refusal too: a recipe declaring a floor
+  above its own `servings`.
 
 ### 10.3 Existing CI gates
 
@@ -735,16 +836,24 @@ functions without a pinned `search_path` are exactly what it catches.
 
 ## 11. Explicitly out of scope
 
-- **The nutrition roll-up, its overrides and derived diet/allergen facts.**
-  Phase 3b, gated on the catalog staying under ~25 recipes until then
-  (§4). The schema that makes it possible — required yields, convertible
-  units — ships in Phase 3.
+- **The nutrition roll-up and its overrides.** Phase 3b, gated on the
+  catalog staying under ~25 recipes until then (§4). The schema that makes
+  it possible — required yields, convertible units — ships in Phase 3, and
+  so do the derived allergen and diet facts, which are not part of this
+  deferral.
+- **Photos.** The first thing anyone will notice is missing, and a fair
+  deferral: images need Supabase Storage, an upload path, and a
+  resizing/format story, none of which exists yet.
+- **A way to ask for a recipe that isn't there.** Same shape as the
+  deferred ingredient-request flow, and deferred alongside it — while the
+  only households are known ones, asking directly works.
 - **User-written recipes.** Columns land now (§2.1), feature later (§13).
 - **Collections.** A separate feature, related to recipes but not a field
   on them. Nothing in Phase 3 — not even a table.
 - Photos, prep/cook times, difficulty, ratings, favourites, comments.
-- **Scaling a recipe by servings** in the UI. The data supports it; the
-  interaction is not this phase.
+- **A `max_servings` ceiling.** `min_servings` exists because a pie for
+  one is not a thing; a paella for forty is the same argument in the other
+  direction, and it is the same one-line addition when someone hits it.
 - **Shopping-list generation** (Phase 5) and **meal plans** (Phase 4),
   both of which consume this schema.
 - **Typo-tolerant search.** Same ceiling as Phase 2: matching happens in
@@ -758,6 +867,15 @@ functions without a pinned `search_path` are exactly what it catches.
 
 ## 12. Risks carried into this phase
 
+- **Scaling produces awkward numbers.** Four servings down to three turns
+  two eggs into 1.5, and no amount of rounding makes half an egg
+  cookable. `min_servings` removes the worst cases; the rest is displayed
+  as the number it is and left to the cook, because a recipe app that
+  quietly rounds 1.5 eggs to 2 has changed the recipe.
+- **`localStorage` can be absent or refused** — a private window, cleared
+  site data. Every read and write is wrapped, and the step list renders
+  correctly with no stored state at all; the ticks are a convenience, not
+  data.
 - **The Phase 3b gate is the main new risk.** Deferring the roll-up costs
   nothing in code and everything in data if the gate is missed: every
   recipe written before it exists is a recipe whose convertibility has

@@ -264,9 +264,19 @@ reasoning is in `DECISIONS.md`, in the entries dated 2026-09-12.
 - **Tags are hand-applied, several per recipe** (`rapido`, `cena`,
   `navidad`). Diet and allergen facts are **derived** from the ingredients
   instead — allergens as a union, diets as an intersection — so a tag can
-  never contradict the recipe it is on. The tags ship in Phase 3; the
-  derived facts share the roll-up's recursive walk and so ship with it in
-  Phase 3b.
+  never contradict the recipe it is on. **Both ship in Phase 3** — the
+  derived facts are set operations with no unit arithmetic, and a catalog
+  that cannot say whether a dish contains gluten is not safe to browse, so
+  they are not deferred with the nutrition totals.
+- **Browsing works the way a cook expects.** Search by name *and by
+  ingredient* ("what can I make with chicken"); filter by tag, allergen
+  and diet; scale a recipe to a different number of people, floored by a
+  per-recipe `min_servings` because a pie for one is not a thing; ticked
+  steps survive a reload; ingredient and sub-recipe lines both link
+  through to their own pages. Single-ingredient entries like "an apple"
+  are hidden from the main list by default — derived as "one line, no
+  steps" rather than tagged — and still reachable by search and usable in
+  meal plans.
 - **Withdrawing a recipe is a retirement, not a delete**, exactly as for
   ingredients — and a live recipe may never reference a retired
   ingredient, because retirement hides the row from readers and the
@@ -433,8 +443,11 @@ valued instead of one-valued.
 - Real transactional email (Resend) — needs a domain first.
 - Anything beyond meal planning / shopping lists (the CLAUDE.md mentions
   "future household management" — out of scope until the core loop works).
-- **A way for households to request a missing ingredient** — the catalog
-  is admin-curated (Phase 2), so a household can't add one themselves.
+- **Recipe photos** — the most visible thing missing from Phase 3, and a
+  fair deferral: images need Supabase Storage, an upload path and a
+  resizing story, none of which exists yet.
+- **A way for households to request a missing ingredient *or recipe*** —
+  both catalogs are admin-curated, so a household can't add one itself.
   Fine while the project owner can just add it directly; needs a real
   suggestion/request flow once other families are on the app and can't
   ask directly. See "Growth trajectory" below.

@@ -1697,3 +1697,195 @@ PR):
    domain at it.
 
 ---
+
+## 2026-09-12 — Retirement, not deletion, is how an ingredient leaves the catalog
+
+**Context:** a post-build review of Phase 2 found that the catalog had no
+removal path at all. The seed importer only ever upserts, so deleting an
+entry from `data/ingredients.ts` left the row live in the database
+forever, with nothing anywhere reporting the difference. For a catalog
+whose entire justification is admin control, "withdraw a mistake" was the
+one operation missing.
+
+**Decision:** ingredients gain a nullable `retired_at`, set through a new
+`public.set_ingredient_retired(_code, _retired)` function. Retired rows
+stay in the table and are hidden from readers by the `ingredients_select`
+policy.
+
+**Why not a real DELETE:** Phase 3 gives recipe lines a foreign key to
+these rows. From that point a DELETE either cascades into somebody's saved
+recipe or is refused by the constraint — and neither is the thing we
+actually want, which is "stop offering this, leave what already references
+it intact". Choosing the soft flag now costs one nullable column; choosing
+it after Phase 3 would mean migrating recipe data.
+
+**Why a timestamp rather than a boolean:** "when did this leave the
+catalog" is the question anyone debugging a missing ingredient asks first,
+and a boolean cannot answer it. The cost is the same one byte of thought.
+
+**Why the policy hides it rather than each query filtering:** a `WHERE
+retired_at IS NULL` in `listIngredients` is a thing the next query can
+forget. A policy is applied by Postgres to every authenticated read, no
+matter who writes it later. This is the same reasoning as the rest of the
+RLS model — enforce in the database, not in the callers.
+
+**Why re-seeding does not un-retire:** `upsert_ingredient` deliberately
+leaves `retired_at` alone. Re-running the seed is meant to be the safe
+operation; quietly resurrecting something an admin withdrew would make it
+the opposite. Un-retiring is an explicit second act, and is asserted in
+pgTAP.
+
+**Why the importer reports rather than acts:** a seed run now lists live
+codes absent from the dataset and tells you how to retire them, but never
+retires anything itself. Withdrawing an ingredient is a decision; a seed
+run that retired things because somebody was mid-edit would be worse than
+the gap it closes.
+
+---
+
+## 2026-09-12 — Phase 2 post-build review: what the tests were not asking
+
+**Context:** Phase 2 was verified complete twice, both times by checking
+that the planned work existed. A third pass asked a different question —
+"what would a bug here look like?" — and found seven things, three of them
+real defects. Worth recording because the *pattern* is the lesson, not the
+individual fixes.
+
+**The three that were actual bugs, and what they have in common:**
+
+1. **`upsert_ingredient` accepted a nameless ingredient.** The function
+   raised a named error for an unknown food group, nutrient, tag, unit or
+   region, for zero allowed units, and for a default unit outside the
+   allowed list. It never looked at `names`. Found by *calling* it with
+   `"names":{}` — it returned a new id.
+2. **Nothing enforced EU-mandatory nutrients.** All 62 ingredients had all
+   eight, so every check passed. But nothing required it: the schema
+   cannot express "which rows exist", `upsert_ingredient` only checks that
+   codes resolve, and the importer's validator did not ask. Completeness
+   was curation luck.
+3. **The food-group filter worked by accident.** PostgREST applies a
+   filter on an embedded column to the *embed*, not the parent — the
+   request returned all 62 rows with `food_groups` nulled on the 53
+   non-matches. What implemented the filter was a later
+   `.filter(row => row.food_groups !== null)` that reads as a
+   type-narrowing guard. Deleting that "redundant" line would have turned
+   the filter into a no-op with no test failing. Fixed with `!inner`, which
+   filters in Postgres where it belongs.
+
+**What they have in common:** every one passed every test that existed,
+because the tests asserted that the feature was present and these were all
+failures of *absence* — a check not written, a rule not stated, a filter
+that appeared to work. Coverage of the happy path says nothing about them.
+
+**The method that found them, for reuse:** probe the live thing with input
+it should refuse, rather than reading the code and reasoning about it. The
+nameless ingredient took one SQL call to prove and would have survived any
+amount of re-reading — the code *looks* thorough, and is, about everything
+it thought of.
+
+**Adopted as a habit for Phase 3:** for each write path, write down what it
+must refuse, then call it with each of those and watch it refuse. An
+invariant nobody has seen fail is an invariant nobody has tested.
+
+**Also fixed, less severe:** accent-blind search (26 of 186 names carry an
+accent, so "platano" found nothing), unlocalised numbers (`3.2 g` in a
+Spanish page that writes `3,2 g`), and a validator that required a density
+for mass+volume but not for count+volume.
+
+**One thing deliberately not fixed:** `listIngredients` still fetches the
+whole catalog and filters in JS. Correct and fast at 62 rows, and the
+`!inner` change moves the food-group filter into Postgres. The known
+ceiling is the ~5,000-ingredient figure in `PHASE_2_PLAN.md` §8.5; pushing
+search server-side needs the `unaccent` extension and an index, which is
+the same work as real typo tolerance. Left as one job for when either is
+actually needed, rather than half-done now.
+
+---
+
+## 2026-09-12 — A cooked recipe can be an ingredient of another recipe
+
+**Context:** raised before Phase 3 started, which is the only cheap moment
+to answer it. Cooked white rice is eaten on its own *and* used inside
+other dishes. The question was whether that needs anything from Phase 2.
+
+**Answer: no Phase 2 change, but one Phase 3 decision cannot wait.**
+
+**Decision:** a recipe line references **either** a catalog ingredient
+**or** another recipe, exactly one of the two, enforced by
+`check (num_nonnulls(ingredient_id, sub_recipe_id) = 1)`. Both columns go
+into Phase 3's *first* migration; the feature that uses the second one
+ships later.
+
+**The option rejected, and why it is the interesting one:** promote a
+cooked recipe into the `ingredients` catalog. It is tempting because
+everything downstream would then work for free — units, nutrition,
+allergens, seasonality all reuse machinery that already exists and is
+tested.
+
+Phase 2 rules it out. That catalog is **global and admin-curated**, a
+logged exception to household scoping whose entire justification is that
+no user can write to it. A household's cooked rice, made to that
+household's yield, is not shared reference data. Promoting it would either
+put household data in a globally-readable table or reopen exactly the
+user-writable-shared-resource problem the growth-trajectory section of
+`CLAUDE.md` exists to prevent — "any household can add to the ingredient
+catalog" is a moderation and abuse surface the moment strangers can sign
+up. So a cooked recipe is not an ingredient; it is a second, different
+kind of thing a line can point at.
+
+**Why the columns land now rather than when the feature is built:** there
+is no recipe schema yet, so today this costs one nullable column and one
+check constraint. Once households have saved real recipes, the same change
+is a data migration against live data. This is the same reasoning that put
+i18n in Phase 2 instead of retrofitting it. Note what is *not* being
+built early: the picker UI, the nutrition roll-up, and the shopping-list
+recursion are all deferred. Only the shape is fixed. This is not
+speculative generality — the requirement was stated outright.
+
+**Four consequences, each of which would otherwise be found late:**
+
+1. **Yield must be entered by a person, not derived.** Nutrition for a
+   sub-recipe line is the sub-recipe's total divided by its yield, so
+   `recipes` needs `yield_quantity` + `yield_unit_id`. That yield cannot
+   be computed from the inputs: 300 g of raw rice becomes roughly 750 g
+   cooked, because it absorbs water. Whoever writes the recipe states it.
+   Same trade as the per-count 100 g equivalence — usability over
+   precision.
+2. **Cycles must be blocked in Postgres.** A → B → A is an infinite loop
+   in nutrition roll-up *and* in the shopping list. A recursive CTE in a
+   trigger on insert/update. A real invariant belongs in the database, not
+   in a Server Action, per this project's standing rule.
+3. **A sub-recipe reference must stay within its own household.**
+   Otherwise `sub_recipe_id` is a cross-household data leak, and a plain
+   FK to `recipes(id)` cannot express the restriction. A **composite FK**
+   can: give `recipes` a `unique (household_id, id)`, carry
+   `household_id` on `recipe_lines`, and reference
+   `recipes (household_id, id)`. That makes a cross-household reference
+   structurally impossible rather than trigger-enforced — the same
+   preference that put `is_default` on `ingredient_allowed_units` instead
+   of a `default_unit_id` column on `ingredients`.
+4. **Unit validation has two branches, and Phase 2 only promised one.**
+   The `ingredient_allowed_units` table comment said "Phase 3 will enforce
+   that a recipe line may only use a unit listed here for the ingredient
+   it references" — correct for a catalog-ingredient line, and silently
+   wrong for a sub-recipe line, which has no row in that table at all.
+   Left as written, the first person implementing it would either reject
+   every sub-recipe line or quietly drop the check. Corrected in migration
+   `20260912110000`; sub-recipe lines take their units from the
+   sub-recipe's declared yield unit.
+
+**Knock-on effects recorded now so later phases are not surprised:**
+Phase 5's shopping list must recurse through sub-recipe lines to reach
+leaf catalog ingredients — a recursive CTE, not a join. Phase 6's fridge
+has the identical either-or shape, because cooked rice in the fridge is a
+real thing you have.
+
+**One open question this makes urgent:** whether recipes can be shared
+between households was already on the Phase 3 list. It should be answered
+*before* the migration in point 3, not after: if sharing ever exists, the
+composite FK is what stops a shared recipe from dragging along a
+sub-recipe the recipient is not allowed to see.
+
+**Why a comment fix got its own migration:** SQL comments on this project
+are real queryable Postgres metadata, not prose in a file — which is
+precisely why a wrong one is worth a migration rather than a quiet edit.

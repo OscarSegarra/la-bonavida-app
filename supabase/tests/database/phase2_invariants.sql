@@ -3,8 +3,13 @@
 -- This file grows with the phase. It currently covers slice 1 (the global
 -- reference vocabularies and the household region setting) and slice 2
 -- (the ingredient catalog and its five companion tables) and slice 4 (the
--- upsert_ingredient write path), and closes with the seed-sanity
--- invariants from plan section 8.1.
+-- upsert_ingredient write path) and the retirement path added by the
+-- post-build review, and closes with the seed-sanity invariants from plan
+-- section 8.1.
+--
+-- The plan count at the top has to be kept in step by hand: pgTAP fails
+-- the run if the number of assertions does not match, which is the point -
+-- it catches a block that silently stopped executing part-way.
 --
 -- Run with the Supabase CLI (`supabase test db`) or pg_prove against any
 -- Postgres with this project's migrations applied. Self-contained and
@@ -23,7 +28,7 @@
 create extension if not exists pgtap;
 
 begin;
-select plan(91);
+select plan(111);
 
 -- Fixtures: an owner, a plain member, and a stranger, plus one household.
 insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
@@ -323,9 +328,26 @@ insert into public.ingredient_translations (ingredient_id, locale, name) values
   ((select id from public.ingredients where code = 'zz_test_milk'), 'es', 'ZZ Leche'),
   ((select id from public.ingredients where code = 'zz_test_egg'),  'es', 'ZZ Huevo');
 
-insert into public.ingredient_nutrients (ingredient_id, nutrient_id, amount) values
-  ((select id from public.ingredients where code = 'zz_test_milk'),
-   (select id from public.nutrients where code = 'protein'), 3.4);
+-- Both fixtures carry all eight EU-mandatory nutrients, for exactly the
+-- reason the egg fixture carries units (see the note below): the
+-- seed-sanity assertions at the end of this file run over every
+-- ingredient present, so a fixture missing a mandatory nutrient would
+-- fail the completeness assertion for the wrong reason.
+--
+-- Generated from the vocabulary rather than listed out, so adding a
+-- mandatory nutrient to the seed later cannot silently leave these behind.
+insert into public.ingredient_nutrients (ingredient_id, nutrient_id, amount)
+select i.id, n.id, 1
+from public.ingredients i
+cross join public.nutrients n
+where i.code in ('zz_test_milk', 'zz_test_egg')
+  and n.eu_mandatory;
+
+-- One real value on top, so later assertions have something meaningful to
+-- read back rather than a uniform placeholder.
+update public.ingredient_nutrients set amount = 3.4
+ where ingredient_id = (select id from public.ingredients where code = 'zz_test_milk')
+   and nutrient_id = (select id from public.nutrients where code = 'protein');
 
 insert into public.ingredient_dietary_tags (ingredient_id, tag_id) values
   ((select id from public.ingredients where code = 'zz_test_milk'),
@@ -359,7 +381,7 @@ select ok(
   + (select count(*) from public.ingredient_nutrients)
   + (select count(*) from public.ingredient_dietary_tags)
   + (select count(*) from public.ingredient_allowed_units)
-  + (select count(*) from public.ingredient_seasonality) = 9,
+  + (select count(*) from public.ingredient_seasonality) = 24,
   'authenticated can read every ingredient companion table'
 );
 
@@ -373,10 +395,15 @@ select throws_ok(
      values ((select id from public.ingredients where code = 'zz_test_milk'), 'en', 'Nope') $q$,
   '42501', null, 'authenticated cannot insert an ingredient translation'
 );
+-- Uses a NON-mandatory nutrient on purpose. The fixture now carries all
+-- eight mandatory ones, so inserting 'fat' here would also collide with
+-- the primary key - and the assertion would then be passing or failing on
+-- whether Postgres happens to evaluate RLS before unique indexes, which
+-- is not what it is meant to be testing.
 select throws_ok(
   $q$ insert into public.ingredient_nutrients (ingredient_id, nutrient_id, amount)
      values ((select id from public.ingredients where code = 'zz_test_milk'),
-             (select id from public.nutrients where code = 'fat'), 1) $q$,
+             (select id from public.nutrients where code = 'fibre'), 1) $q$,
   '42501', null, 'authenticated cannot insert an ingredient nutrient'
 );
 select throws_ok(
@@ -462,10 +489,12 @@ select lives_ok(
   'the same name in two different locales is allowed'
 );
 
+-- Non-mandatory nutrient again, for the same reason: this must fail on the
+-- amount, not on a primary-key collision with the fixture.
 select throws_ok(
   $q$ insert into public.ingredient_nutrients (ingredient_id, nutrient_id, amount)
      values ((select id from public.ingredients where code = 'zz_test_milk'),
-             (select id from public.nutrients where code = 'fat'), -0.1) $q$,
+             (select id from public.nutrients where code = 'fibre'), -0.1) $q$,
   '23514', null, 'a negative nutrient amount is rejected'
 );
 
@@ -580,12 +609,19 @@ select is(
 );
 
 -- Happy path: one call writes the parent row and every companion set.
+--
+-- The payload carries all eight EU-mandatory nutrients rather than a
+-- token two. This ingredient is still present when the seed-sanity
+-- assertions run at the end of the file, and one of those now requires
+-- mandatory-nutrient completeness over every ingredient - so a token
+-- payload would fail it for the wrong reason.
 select lives_ok(
   $q$ select public.upsert_ingredient('{
     "code":"zz_up_full","food_group":"lacteos","nutrition_basis":"per_100ml",
     "density_g_per_ml":1.03,
     "names":{"es":"ZZ Completa","en":"ZZ Full"},
-    "nutrients":{"energy_kcal":63,"protein":3.2},
+    "nutrients":{"energy_kj":264,"energy_kcal":63,"fat":3.6,"saturates":2.3,
+                 "carbohydrate":4.7,"sugars":4.7,"protein":3.2,"salt":0.1},
     "dietary_tags":["milk","vegetarian"],
     "units":{"allowed":["ml","l"],"default":"ml"},
     "seasonality":{"es":[11,12,1]}
@@ -600,8 +636,8 @@ select is(
         + (select count(*) from public.ingredient_allowed_units u where u.ingredient_id = i.id)
         + (select count(*) from public.ingredient_seasonality s where s.ingredient_id = i.id)
    from public.ingredients i where i.code = 'zz_up_full'),
-  11::bigint,
-  'every companion set landed (2 names + 2 nutrients + 2 tags + 2 units + 3 months)'
+  17::bigint,
+  'every companion set landed (2 names + 8 nutrients + 2 tags + 2 units + 3 months)'
 );
 
 select is(
@@ -619,7 +655,8 @@ select lives_ok(
   $q$ select public.upsert_ingredient('{
     "code":"zz_up_full","food_group":"lacteos","nutrition_basis":"per_100ml",
     "names":{"es":"ZZ Completa"},
-    "nutrients":{"energy_kcal":63},
+    "nutrients":{"energy_kj":264,"energy_kcal":63,"fat":3.6,"saturates":2.3,
+                 "carbohydrate":4.7,"sugars":4.7,"protein":3.2,"salt":0.1},
     "dietary_tags":["milk"],
     "units":{"allowed":["ml"],"default":"ml"},
     "seasonality":{}
@@ -687,6 +724,44 @@ select throws_ok(
   'P0001', null, 'an ingredient with no allowed units is rejected'
 );
 
+-- An ingredient with no name is unusable rather than merely incomplete:
+-- every read path resolves a display name, and with no translation rows at
+-- all the fallback rule has nothing to return but a placeholder. The
+-- function checked units this way from the start but never names, so a
+-- payload with "names":{} wrote a complete, nameless ingredient - found by
+-- calling the live function during a post-build review, not by reading it.
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_bad","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{},"nutrients":{},"dietary_tags":[],
+    "units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  'P0001', null, 'an ingredient with no names at all is rejected'
+);
+
+-- Blank is not a name either. Without the trim, "  " would satisfy a mere
+-- presence check and land a row that renders as empty space.
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_bad","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"es":"   "},"nutrients":{},"dietary_tags":[],
+    "units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  'P0001', null, 'an ingredient whose default-locale name is blank is rejected'
+);
+
+-- A name in some other language is not a substitute: the fallback rule
+-- resolves toward the default locale, so this would still render nothing
+-- for a Spanish reader.
+select throws_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_bad","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"en":"Only English"},"nutrients":{},"dietary_tags":[],
+    "units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  'P0001', null, 'a name in a non-default locale alone is rejected'
+);
+
 -- Nothing survives a rejected call.
 select is(
   (select count(*) from public.ingredients where code = 'zz_up_bad'),
@@ -701,7 +776,9 @@ select is(
 select lives_ok(
   $q$ select public.upsert_ingredient('{
     "code":"zz_up_reseed","food_group":"frutas","nutrition_basis":"per_100g",
-    "names":{"es":"ZZ Buena"},"nutrients":{"energy_kcal":50},
+    "names":{"es":"ZZ Buena"},
+    "nutrients":{"energy_kj":209,"energy_kcal":50,"fat":0.2,"saturates":0,
+                 "carbohydrate":12,"sugars":10,"protein":0.5,"salt":0},
     "dietary_tags":["vegetarian"],"units":{"allowed":["g"],"default":"g"}
   }'::jsonb) $q$,
   'seed an ingredient that a later re-seed will fail on'
@@ -722,6 +799,139 @@ select is(
     where i.code = 'zz_up_reseed' and t.locale = 'es'),
   'ZZ Buena',
   'a failed re-seed leaves the previous data intact rather than destroying it'
+);
+
+-- =====================================================================
+-- Retirement: how an ingredient leaves the catalog.
+--
+-- Added after a review found there was no way to withdraw one at all. The
+-- importer only ever upserts, so deleting an entry from the dataset left
+-- the row live in the database forever - and by Phase 3 recipes hold a
+-- foreign key to it, which makes an actual DELETE the wrong tool.
+-- =====================================================================
+
+select is(
+  (select prosecdef from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname = 'set_ingredient_retired'),
+  false,
+  'set_ingredient_retired is SECURITY INVOKER, not DEFINER'
+);
+
+-- Same reasoning as upsert_ingredient, asserted the same way: granting
+-- this to authenticated would hand every signed-in user the ability to
+-- empty the catalog for everyone, which is precisely what this phase's
+-- RLS model exists to prevent.
+select ok(
+  not has_function_privilege('authenticated', 'public.set_ingredient_retired(text,boolean)', 'execute'),
+  'authenticated cannot execute set_ingredient_retired'
+);
+select ok(
+  not has_function_privilege('anon', 'public.set_ingredient_retired(text,boolean)', 'execute'),
+  'anon cannot execute set_ingredient_retired'
+);
+
+select lives_ok(
+  $q$ select public.set_ingredient_retired('zz_test_egg', true) $q$,
+  'an ingredient can be withdrawn'
+);
+
+select isnt(
+  (select retired_at from public.ingredients where code = 'zz_test_egg'),
+  null::timestamptz,
+  'retiring stamps retired_at'
+);
+
+-- The point of the whole mechanism: the row survives, so anything already
+-- referencing it still resolves, but readers stop being offered it.
+select is(
+  (select count(*) from public.ingredients where code = 'zz_test_egg'),
+  1::bigint,
+  'a retired ingredient is not deleted - the row is still there'
+);
+
+select set_config('request.jwt.claims', json_build_object('sub','00000000-0000-0000-0000-0000000000b1','role','authenticated')::text, true);
+set local role authenticated;
+
+select is(
+  (select count(*) from public.ingredients where code = 'zz_test_egg'),
+  0::bigint,
+  'a retired ingredient is invisible to an authenticated reader'
+);
+-- Uses zz_up_full, NOT zz_test_milk: the cascade test above genuinely
+-- deletes the milk fixture as superuser, so by this point it does not
+-- exist and this assertion would read 0 for a reason that has nothing to
+-- do with retirement. (The earlier `delete ... zz_test_egg` is a no-op -
+-- it runs as authenticated, where a DELETE matches no rows - which is why
+-- the egg fixture is still available above.)
+select is(
+  (select count(*) from public.ingredients where code = 'zz_up_full'),
+  1::bigint,
+  'retiring one ingredient does not hide the others'
+);
+
+reset role;
+
+-- Idempotency matters because the obvious implementation - set retired_at
+-- = now() unconditionally - rewrites when it happened on every re-run,
+-- destroying the one fact the timestamp exists to record.
+create temp table zz_retire_stamp as
+  select retired_at as original from public.ingredients where code = 'zz_test_egg';
+
+select public.set_ingredient_retired('zz_test_egg', true);
+
+select is(
+  (select retired_at from public.ingredients where code = 'zz_test_egg'),
+  (select original from zz_retire_stamp),
+  're-retiring keeps the original timestamp rather than resetting it'
+);
+
+select lives_ok(
+  $q$ select public.set_ingredient_retired('zz_test_egg', false) $q$,
+  'a retired ingredient can be restored'
+);
+
+select is(
+  (select retired_at from public.ingredients where code = 'zz_test_egg'),
+  null::timestamptz,
+  'restoring clears retired_at'
+);
+
+-- An unknown code is an error, not a no-op. This is called by a human
+-- deciding to withdraw something, and silently doing nothing is the
+-- outcome most likely to be mistaken for success.
+select throws_ok(
+  $q$ select public.set_ingredient_retired('zz_not_an_ingredient', true) $q$,
+  'P0001', null, 'retiring an unknown code raises rather than doing nothing'
+);
+
+-- Re-seeding must never resurrect something an admin withdrew: un-retiring
+-- is a deliberate act, so upsert_ingredient leaves retired_at alone.
+select lives_ok(
+  $q$ select public.set_ingredient_retired('zz_up_reseed', true) $q$,
+  'withdraw an ingredient that a re-seed will then touch'
+);
+
+select lives_ok(
+  $q$ select public.upsert_ingredient('{
+    "code":"zz_up_reseed","food_group":"frutas","nutrition_basis":"per_100g",
+    "names":{"es":"ZZ Buena"},
+    "nutrients":{"energy_kj":209,"energy_kcal":50,"fat":0.2,"saturates":0,
+                 "carbohydrate":12,"sugars":10,"protein":0.5,"salt":0},
+    "dietary_tags":["vegetarian"],"units":{"allowed":["g"],"default":"g"}
+  }'::jsonb) $q$,
+  're-seeding a withdrawn ingredient succeeds'
+);
+
+select isnt(
+  (select retired_at from public.ingredients where code = 'zz_up_reseed'),
+  null::timestamptz,
+  're-seeding does NOT resurrect a withdrawn ingredient'
+);
+
+select lives_ok(
+  $q$ select public.set_ingredient_retired('zz_up_reseed', false) $q$,
+  'restore it so the seed-sanity assertions below see the whole catalog'
 );
 
 -- =====================================================================
@@ -770,6 +980,34 @@ select is(
             where u.ingredient_id = i.id and u.is_default) <> 1),
   0::bigint,
   'every ingredient has exactly one default unit'
+);
+
+-- Every ingredient carries every EU-mandatory nutrient.
+--
+-- The rest of the vocabulary is optional and sparse by design - an
+-- ingredient with no known vitamins is a normal ingredient. These eight
+-- are different: a declaration missing one of them is not sparse, it is
+-- one no European label is allowed to print.
+--
+-- This was enforced by nothing at all until a review looked for it. The
+-- schema cannot express it (the rule is about which rows exist, not about
+-- any single row), upsert_ingredient only checks that the codes it is
+-- handed resolve, and the importer's validator did not ask. All 62 seeded
+-- ingredients turned out to be complete, but by curation rather than by
+-- any rule - and a probe writing one with a single nutrient was accepted
+-- by every layer.
+--
+-- Written as a count of offenders rather than a total, so a failure names
+-- how many ingredients are short rather than just "a number changed".
+select is(
+  (select count(*) from public.ingredients i
+     cross join public.nutrients n
+    where n.eu_mandatory
+      and not exists (
+        select 1 from public.ingredient_nutrients x
+         where x.ingredient_id = i.id and x.nutrient_id = n.id)),
+  0::bigint,
+  'every ingredient carries every EU-mandatory nutrient'
 );
 
 -- The rule from §2.3: the DEFAULT unit's dimension decides. Volume gives

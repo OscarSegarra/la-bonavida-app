@@ -96,21 +96,42 @@ reasoning) — this replaces the original bullet list:
 ## Phase 2 — Ingredients
 
 **Status: built**, merged to `develop` across five PRs (#5 reference
-schema, #6 ingredient schema, #8 i18n, #9 seed pipeline, #10 browse UI).
-Migrations applied to preprod; typecheck, lint, 40 unit tests, 109 pgTAP
-assertions and the production build all pass. Three gaps at merge time,
-flagged rather than quietly assumed fine:
+schema, #6 ingredient schema, #8 i18n, #9 seed pipeline, #10 browse UI),
+plus a post-build review pass that fixed three real defects and four
+smaller gaps. Migrations applied to preprod; typecheck, lint, 90 unit
+tests, 136 pgTAP assertions and the production build all pass.
+
+**All 62 ingredients are loaded in preprod** and every seed-sanity
+invariant returns clean.
+
+**The post-build review** (see `DECISIONS.md`, "Phase 2 post-build
+review") found that two verification passes had both asked "does the
+planned work exist?" and neither had asked "what would a bug here look
+like?". Three defects had passed every existing test:
+`upsert_ingredient` accepted an ingredient with no name in any language;
+nothing anywhere required the EU-mandatory nutrients (all 62 had them by
+curation, not by rule); and the food-group filter only worked because of
+a null check that read as a type guard. All three are fixed, with
+assertions that fail if they come back. The method that found them —
+call each write path with what it should refuse — is now the habit for
+Phase 3.
+
+Remaining gaps, flagged rather than quietly assumed fine:
 
 - **The seed dataset is 62 ingredients, not the 150–250 targeted.** All
-  13 food groups are covered and every entry carries the seven EU
-  mandatory declarations, so the pipeline and the data shape are proven;
-  reaching the target is continued curation on working, re-runnable
-  infrastructure rather than new engineering.
-- **The full seed has not been applied to preprod.** A representative
-  8-ingredient subset is loaded — chosen to exercise count units,
-  density, wraparound seasonality, allergens and per-100 ml. Applying the
-  rest needs `SUPABASE_SERVICE_ROLE_KEY` set locally, then
-  `pnpm run seed:ingredients`.
+  13 food groups are covered and every entry carries all eight
+  EU-mandatory nutrient values (the seven required declarations, with
+  energy stored in both kJ and kcal) — now enforced by the importer and
+  by a pgTAP invariant rather than left to careful curation. Reaching the
+  target is continued curation on working, re-runnable infrastructure
+  rather than new engineering.
+- **Search is accent-tolerant but not typo-tolerant.** "platano" finds
+  "Plátano"; "platno" does not. Matching happens in the application after
+  fetching the catalog, which is correct and fast at this size — the known
+  ceiling is the ~5,000-ingredient figure in `PHASE_2_PLAN.md` §8.5.
+  Pushing search into Postgres needs the `unaccent` extension plus an
+  index, which is the same job as real typo tolerance, so both wait for
+  whichever is needed first.
 - **Verification used a temporary password user**, since this environment
   has no email inbox for the magic-link flow. Pages were rendered in all
   three locales against preprod and the user was removed afterwards, but
@@ -132,6 +153,14 @@ The bullets below stay the roadmap-level summary.
   revoked from `anon` and `authenticated`. Since there's no user-write
   path, there's no duplicate/moderation/abuse problem to design around at
   all. See `DECISIONS.md`.
+- **Withdrawing an ingredient is a retirement, not a delete.**
+  `set_ingredient_retired(code, true)` stamps `retired_at` and the
+  `ingredients_select` policy hides the row from readers, while the row
+  itself survives so anything already referencing it keeps resolving —
+  which is what makes it safe once Phase 3 recipes hold a foreign key to
+  the catalog. Re-running the seed never un-retires anything. The importer
+  reports live codes missing from the dataset but never acts on them. See
+  `DECISIONS.md`.
 - **Nutrition values:** the full EU-standard set (Regulation 1169/2011
   Annex XIII — 7 mandatory macros, 5 voluntary macros, ~13 vitamins, ~14
   minerals), stored **normalized**: a seeded `nutrients` reference table
@@ -206,6 +235,83 @@ The bullets below stay the roadmap-level summary.
 - Attach ingredients + quantities to a recipe (references the Phase 2
   catalog — never a free-text ingredient name)
 - Browse/search recipes within a household
+- Recipes are household-scoped and translatable, reusing the Phase 2
+  translation-companion-table pattern (`recipe_translations`)
+
+### A cooked recipe can be an ingredient of another recipe
+
+Cooked white rice is eaten on its own *and* used inside other dishes. So
+a recipe line points at **either** a catalog ingredient **or** another
+recipe. Full reasoning in `DECISIONS.md`; the roadmap-level shape:
+
+```sql
+recipe_lines (
+  recipe_id     -> recipes(id),
+  ingredient_id -> ingredients(id)  null,
+  sub_recipe_id -> recipes(id)      null,
+  quantity numeric not null,
+  unit_id       -> units(id),
+  check (num_nonnulls(ingredient_id, sub_recipe_id) = 1)
+)
+```
+
+**The two columns go in Phase 3's first migration even though the feature
+ships later.** There is no recipe schema yet, so today this is one column
+and one constraint; after households have saved real recipes the same
+change is a data migration on live data. Same call the project already
+made for i18n — decided early so it would not be a retrofit. What is
+deferred is the work (picker UI, nutrition roll-up, shopping-list
+recursion), not the shape.
+
+**A recipe is not promoted into the ingredients catalog.** That catalog is
+global and admin-curated on purpose; recipes are household-scoped and
+user-written. Promoting one into the other would either put household
+data in a shared table or reopen the user-writable-shared-resource
+problem the growth-trajectory note above exists to avoid.
+
+Four consequences, each easy to miss:
+
+1. **Yield is entered, not derived.** `recipes` needs `yield_quantity` +
+   `yield_unit_id`, filled in by whoever writes the recipe. It cannot be
+   computed by summing input weights: 300 g of raw rice becomes ~750 g
+   cooked because it absorbs water. Nutrition for a sub-recipe line is
+   the sub-recipe's total ÷ its yield. Same usability-over-precision
+   stance as the per-count 100 g equivalence decision.
+2. **Cycles must be blocked in Postgres.** A → B → A is an infinite loop
+   in both nutrition roll-up and the shopping list. A recursive CTE in a
+   trigger on insert/update — a real invariant, so it belongs in the
+   database, not in a Server Action.
+3. **A sub-recipe reference must stay inside its own household**,
+   otherwise `sub_recipe_id` is a cross-household data leak. A plain FK
+   to `recipes(id)` cannot say that. A composite FK can, and makes it
+   structurally impossible rather than trigger-enforced:
+   `recipes` gets `unique (household_id, id)`, and `recipe_lines` carries
+   `household_id` with
+   `foreign key (household_id, sub_recipe_id) references recipes (household_id, id)`.
+   This is the same preference as Phase 2's `is_default` flag on
+   `ingredient_allowed_units` — express the rule in the schema so it
+   cannot be violated.
+4. **Unit validation has two branches.** A line referencing a catalog
+   ingredient is restricted to that ingredient's `ingredient_allowed_units`.
+   A line referencing a sub-recipe has no row there at all, and takes its
+   units from the sub-recipe's declared yield unit instead. Phase 2's
+   table comment used to promise only the first half; corrected in
+   `20260912110000`.
+
+**Knock-on effects in later phases**, recorded here so they are not a
+surprise:
+- **Phase 5 (shopping lists)** must recurse through sub-recipe lines to
+  reach leaf catalog ingredients — a recursive CTE, not a single join.
+- **Phase 6 (fridge)** has the identical either-or shape: cooked rice in
+  the fridge is a real thing you have, not just raw ingredients.
+
+**Still open before building** (unchanged, but note that sharing now
+interacts with the above): the recipe language model, who may edit a
+recipe within a household, non-numeric quantities ("to taste"), and
+whether recipe sharing between households is designed now. If recipes can
+ever be shared, the composite FK in point 3 is what stops a shared recipe
+from dragging along a sub-recipe the recipient cannot see — so sharing is
+better answered before that migration than after.
 
 ## Phase 4 — Meal plans
 - Assign recipes to days of a week
@@ -219,11 +325,17 @@ The bullets below stay the roadmap-level summary.
 - Multiple household members can see the same list update live
 - (No fridge-awareness yet — that's Phase 6. This phase's generation is
   pure recipe-quantity aggregation.)
+- **Aggregation has to recurse.** A recipe line can point at another
+  recipe (see Phase 3), so reaching the leaf catalog ingredients a
+  shopping list is actually made of means a recursive CTE, not a single
+  join. A recipe using cooked rice must still put *raw rice* on the list.
 
 ## Phase 6 — Fridge / pantry
-- Inventory of what a household currently has on hand (ingredient +
-  quantity, scoped to household — references the Phase 2 catalog, same as
-  recipes)
+- Inventory of what a household currently has on hand, scoped to
+  household. Like a recipe line, a fridge entry points at **either** a
+  catalog ingredient **or** a recipe (see Phase 3) — a tub of cooked rice
+  in the fridge is a real thing you have, and the same either-or shape
+  and same-household composite FK apply here.
 - Manually add/adjust/remove fridge quantities
 - Upgrades Phase 5's shopping-list generation to subtract on-hand fridge
   stock: recipes need 2 onions, fridge has 1, list shows "buy 1" — instead

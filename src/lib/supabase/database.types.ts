@@ -362,6 +362,7 @@ export type Database = {
           grams_per_unit: number | null
           id: number
           nutrition_basis: string
+          retired_at: string | null
         }
         Insert: {
           code: string
@@ -371,6 +372,7 @@ export type Database = {
           grams_per_unit?: number | null
           id?: never
           nutrition_basis: string
+          retired_at?: string | null
         }
         Update: {
           code?: string
@@ -380,6 +382,7 @@ export type Database = {
           grams_per_unit?: number | null
           id?: never
           nutrition_basis?: string
+          retired_at?: string | null
         }
         Relationships: [
           {
@@ -508,6 +511,11 @@ export type Database = {
           role: string
         }[]
       }
+      set_ingredient_retired: {
+        Args: { _code: string; _retired: boolean }
+        Returns: number
+      }
+      upsert_ingredient: { Args: { payload: Json }; Returns: number }
     }
     Enums: {
       [_ in never]: never

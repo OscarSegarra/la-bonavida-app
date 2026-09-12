@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import type { NutrientCategory } from "../domain/nutrition";
+import { resolveTranslation } from "../domain/translations";
 
 type Client = SupabaseClient<Database>;
 
@@ -29,29 +30,14 @@ export type IngredientDetail = IngredientSummary & {
   seasonality: Array<{ regionCode: string; months: number[] }>;
 };
 
-/**
- * Picks the name for the requested locale, falling back to the default.
- *
- * The fallback is resolved here rather than in SQL because the query
- * fetches every translation anyway (there are at most three per
- * ingredient) and a `coalesce` across two joined copies of the same table
- * is harder to read than this for no measurable gain at catalog scale.
- */
-function pickName(
+/** Adapts the domain fallback rule to this module's row shape. */
+function toName(
   translations: Array<{ locale: string; name: string }>,
   locale: string,
   defaultLocale: string,
 ): { name: string; isFallbackName: boolean } {
-  const exact = translations.find((t) => t.locale === locale);
-  if (exact) return { name: exact.name, isFallbackName: false };
-
-  const fallback = translations.find((t) => t.locale === defaultLocale);
-  if (fallback) return { name: fallback.name, isFallbackName: true };
-
-  // Should be unreachable: the default-locale name is required by the seed
-  // validation. Degrade to something identifiable rather than throwing on
-  // a read path.
-  return { name: translations[0]?.name ?? "—", isFallbackName: true };
+  const { name, isFallback } = resolveTranslation(translations, locale, defaultLocale);
+  return { name, isFallbackName: isFallback };
 }
 
 /**
@@ -72,13 +58,21 @@ export async function listIngredients(
     defaultLocale: string;
     search?: string;
     foodGroupCode?: string;
+    /**
+     * Include only ingredients carrying ALL of these tag codes.
+     * Inclusive on purpose - see the note below on why allergen
+     * *exclusion* is a different feature rather than this one inverted.
+     */
+    dietaryTagCodes?: string[];
   },
 ): Promise<IngredientSummary[]> {
-  const { locale, defaultLocale, search, foodGroupCode } = options;
+  const { locale, defaultLocale, search, foodGroupCode, dietaryTagCodes } = options;
 
   let query = supabase
     .from("ingredients")
-    .select("code, food_groups(code), ingredient_translations(locale, name)");
+    .select(
+      "code, food_groups(code), ingredient_translations(locale, name), ingredient_dietary_tags(dietary_tags(code))",
+    );
 
   if (foodGroupCode) {
     query = query.eq("food_groups.code", foodGroupCode);
@@ -88,6 +82,7 @@ export async function listIngredients(
   if (error) throw error;
 
   const term = search?.trim().toLowerCase();
+  const requiredTags = dietaryTagCodes?.filter(Boolean) ?? [];
 
   return data
     .filter((row) => row.food_groups !== null)
@@ -101,10 +96,22 @@ export async function listIngredients(
           t.name.toLowerCase().includes(term),
         ),
     )
+    // Requires every selected tag, not any of them: picking "vegan" and
+    // "gluten-free" together should narrow the list, which is what someone
+    // combining two dietary requirements means.
+    .filter((row) => {
+      if (requiredTags.length === 0) return true;
+      const has = new Set(
+        (row.ingredient_dietary_tags ?? [])
+          .map((t) => t.dietary_tags?.code)
+          .filter((c): c is string => Boolean(c)),
+      );
+      return requiredTags.every((code) => has.has(code));
+    })
     .map((row) => ({
       code: row.code,
       foodGroupCode: row.food_groups!.code,
-      ...pickName(row.ingredient_translations ?? [], locale, defaultLocale),
+      ...toName(row.ingredient_translations ?? [], locale, defaultLocale),
     }))
     .sort((a, b) => a.name.localeCompare(b.name, locale));
 }
@@ -154,7 +161,7 @@ export async function getIngredient(
   return {
     code: data.code,
     foodGroupCode: data.food_groups.code,
-    ...pickName(data.ingredient_translations ?? [], options.locale, options.defaultLocale),
+    ...toName(data.ingredient_translations ?? [], options.locale, options.defaultLocale),
     nutritionBasis: data.nutrition_basis as "per_100g" | "per_100ml",
     densityGPerMl: data.density_g_per_ml,
     gramsPerUnit: data.grams_per_unit,
@@ -197,4 +204,31 @@ export async function listFoodGroups(supabase: Client) {
 
   if (error) throw error;
   return data.map((row) => row.code);
+}
+
+/**
+ * Lists the dietary tags, for the browse filter.
+ *
+ * Returns the category alongside each code because the two kinds are not
+ * interchangeable in a filter. Selecting a *diet* tag means "only things
+ * suitable for this", which is what `listIngredients`' inclusive filter
+ * does. Selecting an *allergen* almost always means the opposite -
+ * "nothing containing this" - and inverting the same control silently by
+ * category would be a trap. Allergen exclusion is its own feature, and
+ * belongs with the household dietary-restrictions work rather than being
+ * smuggled in here.
+ * @param supabase A Supabase client scoped to the current request.
+ * @returns Tag codes with their category, in display order.
+ */
+export async function listDietaryTags(supabase: Client) {
+  const { data, error } = await supabase
+    .from("dietary_tags")
+    .select("code, category")
+    .order("sort_order", { ascending: true });
+
+  if (error) throw error;
+  return data.map((row) => ({
+    code: row.code,
+    category: row.category as "allergen" | "diet",
+  }));
 }

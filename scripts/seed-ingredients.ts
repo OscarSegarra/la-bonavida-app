@@ -62,16 +62,19 @@ function validate(item: SeedIngredient): string[] {
 
   const dimensions = new Set(allowed.map((u) => UNIT_DIMENSION[u]));
 
-  // The nutrition_basis rule, spelled out: volume-based ingredients are
-  // per_100ml, mass- AND count-based ones are per_100g.
-  const expectedBasis = dimensions.has("volume") && !dimensions.has("mass")
-    ? "per_100ml"
-    : dimensions.size === 1 && dimensions.has("count")
-      ? "per_100g"
-      : null;
-  if (expectedBasis && item.nutrition_basis !== expectedBasis) {
+  // The nutrition_basis rule: the DEFAULT unit's dimension decides. Volume
+  // gives per_100ml, mass and count both give per_100g.
+  //
+  // An earlier version asked whether *any* allowed unit was volume, which
+  // reclassified milk and olive oil - both declared per 100 ml, both also
+  // measurable in grams. Worse, it returned null for that case and skipped
+  // the check entirely, so the inconsistency validated clean. Deciding on
+  // the default unit is well defined for every ingredient, eggs included.
+  const defaultDimension = UNIT_DIMENSION[item.units.default];
+  const expectedBasis = defaultDimension === "volume" ? "per_100ml" : "per_100g";
+  if (item.nutrition_basis !== expectedBasis) {
     problems.push(
-      `nutrition_basis is ${item.nutrition_basis} but its units are ${[...dimensions].join("/")}`,
+      `nutrition_basis is ${item.nutrition_basis} but its default unit "${item.units.default}" is ${defaultDimension}, which implies ${expectedBasis}`,
     );
   }
 

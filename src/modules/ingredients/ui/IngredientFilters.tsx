@@ -19,25 +19,33 @@ import { usePathname, useRouter } from "@/i18n/navigation";
  */
 export function IngredientFilters({
   foodGroups,
+  dietTags,
   search,
   foodGroup,
+  diet,
 }: {
   foodGroups: string[];
+  /** Diet tags only - allergens are deliberately not offered here (see listDietaryTags). */
+  dietTags: string[];
   search?: string;
   foodGroup?: string;
+  diet?: string;
 }) {
   const t = useTranslations("Ingredients");
   const tGroups = useTranslations("foodGroups");
+  const tTags = useTranslations("dietaryTags");
   const pathname = usePathname();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
-  function apply(next: { search?: string; group?: string }) {
+  function apply(next: { search?: string; group?: string; diet?: string }) {
     const params = new URLSearchParams();
     const term = next.search ?? search ?? "";
     const group = next.group ?? foodGroup ?? "";
+    const dietCode = next.diet ?? diet ?? "";
     if (term.trim()) params.set("q", term.trim());
     if (group) params.set("group", group);
+    if (dietCode) params.set("diet", dietCode);
 
     const query = params.toString();
     startTransition(() => {
@@ -83,6 +91,25 @@ export function IngredientFilters({
           {foodGroups.map((code) => (
             <option key={code} value={code}>
               {tGroups(code)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <label className="flex flex-col gap-1 text-sm">
+        <span className="font-medium text-black dark:text-zinc-50">
+          {t("suitableFor")}
+        </span>
+        <select
+          value={diet ?? ""}
+          disabled={pending}
+          onChange={(event) => apply({ diet: event.target.value })}
+          className="rounded-md border border-black/10 bg-white px-3 py-2 text-black disabled:opacity-50 dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-50"
+        >
+          <option value="">{t("anyDiet")}</option>
+          {dietTags.map((code) => (
+            <option key={code} value={code}>
+              {tTags(code)}
             </option>
           ))}
         </select>

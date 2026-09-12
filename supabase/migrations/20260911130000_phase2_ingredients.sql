@@ -33,7 +33,7 @@ comment on column public.ingredients.code is
 'Stable slug ("milk_whole", "olive_oil_evoo"). The natural key, because names vary by locale and therefore cannot be one. Upserted on by the seed importer.';
 
 comment on column public.ingredients.nutrition_basis is
-'Whether this ingredient''s nutrient amounts are per 100 g or per 100 ml. EU labels declare per 100 g for solids and per 100 ml for liquids, so storing the basis per ingredient stops the two being silently mixed in one column. The rule: volume-based ingredients are per_100ml; mass- AND count-based ones are per_100g. Spelling out count matters - eggs are sold by the unit but their nutrition is declared per 100 g, so "basis follows the unit dimension" would otherwise be undefined for them.';
+'Whether this ingredient''s nutrient amounts are per 100 g or per 100 ml. EU labels declare per 100 g for solids and per 100 ml for liquids, so storing the basis per ingredient stops the two being silently mixed in one column. The rule: the ingredient''s DEFAULT allowed unit decides - a volume default gives per_100ml, mass and count defaults both give per_100g. It must be the default rather than "any allowed unit", because liquids like milk and olive oil are declared per 100 ml while also being measurable in grams, and allowing an extra unit must not change what the values are declared against.';
 
 comment on column public.ingredients.density_g_per_ml is
 'Approximate grams per millilitre, for ingredients whose allowed units span both mass and volume (oils, milk, honey). Null when the ingredient needs no such bridge. A deliberate approximation: it exists so a tablespoon of oil can be converted to grams at all, and must never be presented as exact nutrition.';

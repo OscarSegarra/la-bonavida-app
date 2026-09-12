@@ -14,6 +14,7 @@ export {
   listIngredients,
   getIngredient,
   listFoodGroups,
+  listDietaryTags,
 } from "./data/ingredients";
 export type { IngredientSummary, IngredientDetail } from "./data/ingredients";
 
@@ -23,6 +24,9 @@ export {
   groupMonthsIntoRuns,
 } from "./domain/nutrition";
 export type { NutrientValue, NutrientGroup, NutrientCategory } from "./domain/nutrition";
+
+export { resolveTranslation } from "./domain/translations";
+export type { Translation, ResolvedName } from "./domain/translations";
 
 export { convertQuantity } from "./domain/units";
 export type { UnitInfo, Dimension, Bridges } from "./domain/units";

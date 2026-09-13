@@ -101,6 +101,17 @@ export type SeedIngredient = {
   density_g_per_ml?: number;
   /** Required when a count unit is allowed (1 egg ~ 58 g). Approximate. */
   grams_per_unit?: number;
+  /**
+   * Whether a fraction of one is a real thing a person can use: half an
+   * onion yes, half an egg no. Required exactly when a count unit is
+   * allowed, and must be absent otherwise - the question is meaningless
+   * for something nobody counts.
+   *
+   * It decides which serving sizes a recipe can offer: rather than
+   * rounding a scaled quantity, a size is simply not offered when it
+   * would need half of something indivisible.
+   */
+  count_divisible?: boolean;
   /** The default locale's name is required; the others are optional and fall back. */
   names: { es: string } & Partial<Record<LocaleCode, string>>;
   /** Sparse by design - only what is actually known for this ingredient. */

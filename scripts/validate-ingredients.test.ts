@@ -47,6 +47,68 @@ describe("validateIngredient: the fixture is genuinely sound", () => {
   });
 });
 
+describe("validateIngredient: count divisibility", () => {
+  it("accepts a count ingredient that says whether half of one is usable", () => {
+    expect(
+      validateIngredient(
+        sound({
+          units: { allowed: ["g", "unit"], default: "unit" },
+          grams_per_unit: 58,
+          count_divisible: false,
+        }),
+      ),
+    ).toEqual([]);
+  });
+
+  // Without this, a new count-based ingredient would silently default to
+  // something - and the default that reads as harmless (divisible) is the
+  // one that puts half an egg back on screen.
+  it("refuses a count ingredient that does not say", () => {
+    const problems = validateIngredient(
+      sound({
+        units: { allowed: ["g", "unit"], default: "unit" },
+        grams_per_unit: 58,
+      }),
+    );
+    expect(problems.join(" ")).toContain("count_divisible");
+  });
+
+  it("refuses divisibility on an ingredient nobody counts", () => {
+    const problems = validateIngredient(
+      sound({
+        units: { allowed: ["g", "kg"], default: "g" },
+        count_divisible: true,
+      }),
+    );
+    expect(problems.join(" ")).toContain("allows no count unit");
+  });
+
+  it("does not ask a mass-only ingredient for it", () => {
+    expect(validateIngredient(sound())).toEqual([]);
+  });
+});
+
+describe("the shipped dataset answers divisibility wherever it is asked", () => {
+  it("has count_divisible on exactly the count-unit entries", () => {
+    const wrong = ingredients.filter(
+      (item) =>
+        item.units.allowed.includes("unit") !== (item.count_divisible !== undefined),
+    );
+    expect(wrong.map((i) => i.code)).toEqual([]);
+  });
+
+  // A first pass, to be rechecked once the catalog is complete. Recorded
+  // as a test so that "we will revisit this" is visible rather than a
+  // promise in a commit message.
+  it("currently treats only eggs and sardines as indivisible", () => {
+    const indivisible = ingredients
+      .filter((item) => item.count_divisible === false)
+      .map((item) => item.code)
+      .sort();
+    expect(indivisible).toEqual(["huevo", "sardina"]);
+  });
+});
+
 describe("validateIngredient: EU-mandatory nutrients", () => {
   it.each(EU_MANDATORY_NUTRIENTS)("rejects an entry missing %s", (code) => {
     const nutrients = { ...sound().nutrients };
@@ -104,6 +166,7 @@ describe("validateIngredient: bridging values across dimensions", () => {
         units: { allowed: ["unit", "ml"], default: "unit" },
         grams_per_unit: 50,
         density_g_per_ml: 1.02,
+        count_divisible: true,
       }),
     );
     expect(problems).toEqual([]);

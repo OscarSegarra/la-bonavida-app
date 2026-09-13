@@ -315,7 +315,36 @@ It is gathered **now, during curation**, even though only the scaling UI
 reads it — the Phase 2 precedent for `density_g_per_ml` and
 `grams_per_unit`, and for the same reason: deciding it while already
 looking at the ingredient is free, and revisiting the whole catalog later
-is a second research pass. What it drives is in §6.1.
+is a second research pass. What it drives is in §6.2.
+
+**This takes two migrations, not one, and the split is load-bearing.** The
+column is added by one migration, but its *values* come from the seed
+dataset rather than from SQL, because they are curated data that belongs
+next to the ingredient it describes. So the rule requiring the column to
+be filled cannot be switched on in the same breath as the column
+appearing: at that instant every existing row is null and the catalog
+fails its own new invariant. The order is **create → seed → alter**, the
+same sequencing the Phase 2 review made explicit for
+`households.region_id`:
+
+1. `20260912120000` adds the column and the convertibility rule
+2. `pnpm run seed:ingredients` fills it for all 62 ingredients
+3. `20260912130000` starts requiring it
+
+On a fresh database — CI, or a new environment — there are no ingredients
+when step 3 runs, so its check passes vacuously and both migrations apply
+back to back. Only an already-populated environment needs the seed run in
+between, and the migration says so in the exception it raises.
+
+**Both rules are enforced by `deferrable initially deferred` constraint
+triggers**, on both `ingredients` and `ingredient_allowed_units`. The
+deferral is not incidental: `upsert_ingredient` updates the parent row
+*before* replacing the allowed units, so an immediate check would compare
+a new density against the old unit set and reject an upsert that is
+perfectly valid once finished. Triggers sit on both tables because either
+side can break the rule — nulling a factor, or allowing a unit that needs
+one. There is deliberately no trigger on delete: removing an allowed unit
+can only ever make an ingredient more convertible.
 
 ### 2.7 Indexes
 
@@ -818,6 +847,28 @@ Every invariant in §3 gets **two** assertions: the write path accepts what
 it should, and **refuses what it should not**. The Phase 2 post-build
 review found three defects that had passed every existing test precisely
 because nothing asked the second question.
+
+**How to test a deferred constraint trigger, learned the hard way in
+slice 2.** Every rule in this phase is enforced by a `deferrable initially
+deferred` constraint trigger, so the write succeeds and the check runs at
+commit — and a pgTAP file never commits. Forcing the check per test with
+`SET CONSTRAINTS ALL IMMEDIATE` does not work: it changes the mode for the
+rest of the transaction rather than flushing once, so the next statement
+raises on its own, outside any assertion, and takes the whole run down.
+
+The shape that does work, and that the remaining slices should copy:
+
+1. **Assert the rule function directly** (`private.x_is_valid(id)`). It
+   holds the logic, it is a pure read, and it behaves the same whenever it
+   is called. These are the assertions that pin the behaviour.
+2. **`has_trigger`** on every table the rule is wired to — the part
+   layer 1 cannot see.
+3. **One end-to-end assertion, last in the file**, forcing the deferred
+   check to prove the two are connected. Last because `SET CONSTRAINTS`
+   leaks into everything after it.
+
+Writing the rule as a named function that the trigger merely calls is
+therefore not decoration — it is what makes the rule testable at all.
 
 Refusals to assert:
 

@@ -125,6 +125,22 @@ export function validateIngredient(item: SeedIngredient): string[] {
     problems.push("allows a count unit but no grams_per_unit");
   }
 
+  // Divisibility is required exactly where a count unit is allowed, and
+  // forbidden elsewhere. Both halves matter: without the first, a new
+  // count-based ingredient would silently default to something, and the
+  // default that reads as harmless (divisible) is the one that puts half
+  // an egg back on screen. Without the second, the field spreads to
+  // ingredients nobody counts, where it means nothing and will eventually
+  // be believed by something.
+  if (dimensions.has("count") && item.count_divisible === undefined) {
+    problems.push(
+      "allows a count unit but no count_divisible - say whether half of one is usable",
+    );
+  }
+  if (!dimensions.has("count") && item.count_divisible !== undefined) {
+    problems.push("has count_divisible but allows no count unit, where it means nothing");
+  }
+
   const missingMandatory = EU_MANDATORY_NUTRIENTS.filter(
     (code) => item.nutrients[code] === undefined,
   );

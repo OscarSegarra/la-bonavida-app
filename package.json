@@ -10,7 +10,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "seed:ingredients": "node --env-file-if-exists=.env.local scripts/seed-ingredients.ts"
+    "seed:ingredients": "node --env-file-if-exists=.env.local scripts/seed-ingredients.ts",
+    "seed:recipes": "node --env-file-if-exists=.env.local scripts/seed-recipes.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.6",

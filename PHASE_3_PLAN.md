@@ -564,10 +564,18 @@ ingredients, with an asymmetry that is easy to get backwards:
   application asks for. There is no user write path to secure, which is
   the whole point of an admin-curated catalog.
 - `execute` on `public.upsert_recipe` and `public.set_recipe_retired` is
-  **revoked from `anon` and `authenticated`**, exactly as Phase 2 does for
-  `upsert_ingredient`. Both are `security definer` with a pinned
-  `search_path` — migration `20260912070000` is the precedent, and the
-  reason it exists is that forgetting it was a real finding.
+  **revoked from `public`, `anon` and `authenticated`**, exactly as Phase 2
+  does for `upsert_ingredient`, and both pin `search_path` — migration
+  `20260912070000` is the precedent, and the reason it exists is that
+  forgetting it was a real finding.
+
+  **Corrected while building slice 5:** an earlier draft of this plan said
+  both were `security definer`. They are not, and neither are Phase 2's —
+  the plan described the existing implementation inaccurately. Revoked
+  `execute` plus a seed script running under the service role (which holds
+  `BYPASSRLS`) achieves the same thing without a definer function, which is
+  a standing privilege-escalation surface. Here there is nothing to
+  escalate, so the plainer version is also the safer one.
 
 ---
 

@@ -848,6 +848,28 @@ it should, and **refuses what it should not**. The Phase 2 post-build
 review found three defects that had passed every existing test precisely
 because nothing asked the second question.
 
+**How to test a deferred constraint trigger, learned the hard way in
+slice 2.** Every rule in this phase is enforced by a `deferrable initially
+deferred` constraint trigger, so the write succeeds and the check runs at
+commit — and a pgTAP file never commits. Forcing the check per test with
+`SET CONSTRAINTS ALL IMMEDIATE` does not work: it changes the mode for the
+rest of the transaction rather than flushing once, so the next statement
+raises on its own, outside any assertion, and takes the whole run down.
+
+The shape that does work, and that the remaining slices should copy:
+
+1. **Assert the rule function directly** (`private.x_is_valid(id)`). It
+   holds the logic, it is a pure read, and it behaves the same whenever it
+   is called. These are the assertions that pin the behaviour.
+2. **`has_trigger`** on every table the rule is wired to — the part
+   layer 1 cannot see.
+3. **One end-to-end assertion, last in the file**, forcing the deferred
+   check to prove the two are connected. Last because `SET CONSTRAINTS`
+   leaks into everything after it.
+
+Writing the rule as a named function that the trigger merely calls is
+therefore not decoration — it is what makes the rule testable at all.
+
 Refusals to assert:
 
 - A line with both `ingredient_id` and `sub_recipe_id`; a line with

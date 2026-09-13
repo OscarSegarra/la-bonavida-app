@@ -62,37 +62,64 @@ comment on function private.ingredient_divisibility_is_answered(bigint) is
 'Input: an ingredient id. Returns true when count_divisible is set exactly where a count unit is allowed, and unset everywhere else. Used by the constraint triggers on public.ingredients and public.ingredient_allowed_units; not a permission check.';
 
 /**
- * Constraint-trigger body for the rule above. One function for both
- * tables, as with convertibility: the rule is about the ingredient, and
- * the table only decides where its id is found.
+ * Raises if this ingredient does not answer the divisibility question
+ * exactly where the question applies. Stated once; the wrappers below only
+ * say where the ingredient id is found.
  */
-create or replace function private.check_ingredient_divisibility()
-returns trigger
+create or replace function private.assert_ingredient_divisibility(p_ingredient_id bigint)
+returns void
 language plpgsql
 set search_path = ''
 as $$
 declare
-  _ingredient_id bigint;
   _code text;
 begin
-  _ingredient_id := case tg_table_name
-    when 'ingredients' then new.id
-    else new.ingredient_id
-  end;
-
-  if not private.ingredient_divisibility_is_answered(_ingredient_id) then
-    select code into _code from public.ingredients where id = _ingredient_id;
+  if not private.ingredient_divisibility_is_answered(p_ingredient_id) then
+    select code into _code from public.ingredients where id = p_ingredient_id;
     raise exception
       'ingredient "%": count_divisible must be set when a count unit is allowed and null when it is not - say whether half of one is usable',
-      coalesce(_code, _ingredient_id::text);
+      coalesce(_code, p_ingredient_id::text);
   end if;
+end;
+$$;
 
+comment on function private.assert_ingredient_divisibility(bigint) is
+'Raises when an ingredient sets count_divisible without allowing a count unit, or allows one without setting it. Called by the constraint triggers on public.ingredients and public.ingredient_allowed_units; not a permission check.';
+
+/**
+ * Trigger wrappers: one per table, for the reason spelled out in
+ * 20260912120000 - plpgsql plans every field reference in an expression
+ * whether or not its branch is taken, so a single function switching on
+ * TG_TABLE_NAME cannot read `new.id` on one table and `new.ingredient_id`
+ * on another.
+ */
+create or replace function private.check_ingredients_divisibility()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform private.assert_ingredient_divisibility(new.id);
   return null;
 end;
 $$;
 
-comment on function private.check_ingredient_divisibility() is
-'Constraint-trigger body enforcing that count_divisible is answered exactly where a count unit is allowed. Deferred to commit, because upsert_ingredient writes the parent row before replacing its allowed units and the intermediate states are legitimately inconsistent.';
+comment on function private.check_ingredients_divisibility() is
+'Constraint-trigger body on public.ingredients enforcing that count_divisible is answered exactly where a count unit is allowed. Deferred to commit, because upsert_ingredient writes the parent row before replacing its allowed units and the intermediate states are legitimately inconsistent.';
+
+create or replace function private.check_allowed_units_divisibility()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform private.assert_ingredient_divisibility(new.ingredient_id);
+  return null;
+end;
+$$;
+
+comment on function private.check_allowed_units_divisibility() is
+'Constraint-trigger body on public.ingredient_allowed_units enforcing the same rule from the other side: it catches allowing a count unit on an ingredient that never answered the question.';
 
 -- Deferred for the same reason as the convertibility triggers: an upsert
 -- sets count_divisible on the parent row before the allowed units that
@@ -101,7 +128,7 @@ create constraint trigger ingredients_divisibility_answered
   after insert or update of count_divisible
   on public.ingredients
   deferrable initially deferred
-  for each row execute function private.check_ingredient_divisibility();
+  for each row execute function private.check_ingredients_divisibility();
 
 -- The other direction: allowing a count unit on an ingredient that never
 -- answered the question.
@@ -109,7 +136,7 @@ create constraint trigger ingredient_allowed_units_divisibility_answered
   after insert or update
   on public.ingredient_allowed_units
   deferrable initially deferred
-  for each row execute function private.check_ingredient_divisibility();
+  for each row execute function private.check_allowed_units_divisibility();
 
 -- ---------------------------------------------------------------------
 -- 2. Prove the catalog already satisfies it.

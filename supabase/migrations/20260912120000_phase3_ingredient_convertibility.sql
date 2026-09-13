@@ -90,39 +90,68 @@ comment on function private.ingredient_units_are_convertible(bigint) is
 'Input: an ingredient id. Returns true when every unit the ingredient allows can be converted into its nutrition_basis dimension, using density_g_per_ml to cross mass and volume and grams_per_unit to leave a count. Used by the constraint triggers on public.ingredients and public.ingredient_allowed_units; not a permission check.';
 
 /**
- * Constraint-trigger body for the rule above.
- *
- * One function serves both tables because the rule is about the
- * ingredient as a whole, and which table changed only decides where the
- * ingredient id is found.
+ * Raises if any unit this ingredient allows cannot be converted to its
+ * nutrition basis. The rule is stated here once; the trigger wrappers
+ * below do nothing but say where the ingredient id is found.
  */
-create or replace function private.check_ingredient_convertibility()
-returns trigger
+create or replace function private.assert_ingredient_convertible(p_ingredient_id bigint)
+returns void
 language plpgsql
 set search_path = ''
 as $$
 declare
-  _ingredient_id bigint;
   _code text;
 begin
-  _ingredient_id := case tg_table_name
-    when 'ingredients' then new.id
-    else new.ingredient_id
-  end;
-
-  if not private.ingredient_units_are_convertible(_ingredient_id) then
-    select code into _code from public.ingredients where id = _ingredient_id;
+  if not private.ingredient_units_are_convertible(p_ingredient_id) then
+    select code into _code from public.ingredients where id = p_ingredient_id;
     raise exception
       'ingredient "%" allows a unit that cannot be converted to its nutrition basis: supply density_g_per_ml (mass <-> volume) or grams_per_unit (count), or stop allowing that unit',
-      coalesce(_code, _ingredient_id::text);
+      coalesce(_code, p_ingredient_id::text);
   end if;
+end;
+$$;
 
+comment on function private.assert_ingredient_convertible(bigint) is
+'Raises when an ingredient allows a unit that cannot be converted to its nutrition basis. Called by the constraint triggers on public.ingredients and public.ingredient_allowed_units; not a permission check.';
+
+/**
+ * Trigger wrappers: one per table, deliberately, rather than one function
+ * branching on TG_TABLE_NAME.
+ *
+ * plpgsql resolves the field references in an expression when it first
+ * plans that expression, not when a branch is taken. So
+ * `case tg_table_name when 'ingredients' then new.id else new.ingredient_id end`
+ * fails with "record new has no field ingredient_id" on the ingredients
+ * table even though that branch never runs. Two four-line functions cannot
+ * have that problem.
+ */
+create or replace function private.check_ingredients_convertibility()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform private.assert_ingredient_convertible(new.id);
   return null;
 end;
 $$;
 
-comment on function private.check_ingredient_convertibility() is
-'Constraint-trigger body enforcing that every allowed unit of an ingredient is convertible to its nutrition basis. Deferred to commit, because upsert_ingredient rewrites the parent row and its allowed units in one transaction and the intermediate states are legitimately inconsistent.';
+comment on function private.check_ingredients_convertibility() is
+'Constraint-trigger body on public.ingredients enforcing unit convertibility. Deferred to commit, because upsert_ingredient rewrites the parent row and its allowed units in one transaction and the intermediate states are legitimately inconsistent.';
+
+create or replace function private.check_allowed_units_convertibility()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  perform private.assert_ingredient_convertible(new.ingredient_id);
+  return null;
+end;
+$$;
+
+comment on function private.check_allowed_units_convertibility() is
+'Constraint-trigger body on public.ingredient_allowed_units enforcing unit convertibility. The other direction of the same rule: it catches allowing a unit whose conversion factor is missing.';
 
 -- Deferred to commit, not checked per statement. upsert_ingredient updates
 -- the parent row first and replaces the allowed units afterwards, so a
@@ -132,7 +161,7 @@ create constraint trigger ingredients_units_convertible
   after insert or update of nutrition_basis, density_g_per_ml, grams_per_unit
   on public.ingredients
   deferrable initially deferred
-  for each row execute function private.check_ingredient_convertibility();
+  for each row execute function private.check_ingredients_convertibility();
 
 -- Both directions. Without this one the rule could be broken from the
 -- other side: allow a volume unit on an ingredient that has no density.
@@ -140,7 +169,7 @@ create constraint trigger ingredient_allowed_units_convertible
   after insert or update
   on public.ingredient_allowed_units
   deferrable initially deferred
-  for each row execute function private.check_ingredient_convertibility();
+  for each row execute function private.check_allowed_units_convertibility();
 
 -- Deleting an allowed unit can only ever make an ingredient more
 -- convertible, so there is deliberately no trigger on delete.

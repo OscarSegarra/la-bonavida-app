@@ -14,7 +14,7 @@
 -- the run if the number of assertions does not match, which is the point -
 -- it catches a block that silently stopped executing part-way.
 --
--- A note on WHY every refusal is asserted against `set constraints all
+-- A note on WHY every assertion is made against `set constraints all
 -- immediate` rather than against the offending statement itself: both
 -- rules are enforced by DEFERRABLE INITIALLY DEFERRED constraint
 -- triggers, so the write itself succeeds and the check happens at commit.
@@ -23,6 +23,13 @@
 -- a faithful test of the real path: upsert_ingredient depends on exactly
 -- this deferral, because it rewrites a parent row before replacing the
 -- allowed units that decide whether the parent row is valid.
+--
+-- Which is why each test does all of its writing first and forces the
+-- check exactly once, at the end. `SET CONSTRAINTS` sets the mode for the
+-- rest of the transaction rather than flushing once, so a mid-test force
+-- would make the NEXT statement raise on its own, outside any assertion,
+-- and take the run down with it. The per-test savepoint puts the mode
+-- back, since SET CONSTRAINTS is itself transactional.
 
 create extension if not exists pgtap;
 
@@ -93,7 +100,7 @@ where i.code = 'zz_vol_nodensity' and u.code in ('g', 'tbsp');
 
 select throws_ok(
   'set constraints all immediate',
-  null,
+  'P0001',
   null,
   'a volume unit against a per-100-g basis is refused without a density'
 );
@@ -109,7 +116,7 @@ where i.code = 'zz_count_noweight' and u.code in ('g', 'unit');
 
 select throws_ok(
   'set constraints all immediate',
-  null,
+  'P0001',
   null,
   'a count unit is refused without a grams_per_unit'
 );
@@ -128,7 +135,7 @@ where i.code = 'zz_count_to_volume' and u.code in ('ml', 'unit');
 
 select throws_ok(
   'set constraints all immediate',
-  null,
+  'P0001',
   null,
   'a count unit against a per-100-ml basis is refused without a density as well'
 );
@@ -144,12 +151,11 @@ insert into public.ingredient_allowed_units (ingredient_id, unit_id, is_default)
 select i.id, u.id, u.code = 'g'
 from public.ingredients i, public.units u
 where i.code = 'zz_density_removed' and u.code in ('g', 'tbsp');
-set constraints all immediate;
 update public.ingredients set density_g_per_ml = null where code = 'zz_density_removed';
 
 select throws_ok(
   'set constraints all immediate',
-  null,
+  'P0001',
   null,
   'nulling the density of an ingredient that already allows a volume unit is refused'
 );
@@ -157,14 +163,19 @@ rollback to savepoint t7;
 
 -- Removing an allowed unit can only make an ingredient more convertible,
 -- so there is no trigger on delete and this must stay legal.
+--
+-- Deliberately built with NO density, so the tbsp row makes the ingredient
+-- invalid while it exists. If the check looked at the queued trigger row
+-- rather than at the table's current state, this would still fail after
+-- the delete - which is exactly the confusion worth pinning, since the
+-- pending event for the inserted tbsp row does still fire.
 savepoint t8;
-insert into public.ingredients (code, food_group_id, nutrition_basis, density_g_per_ml)
-select 'zz_unit_removed', id, 'per_100g', 0.85 from public.food_groups where code = 'cereales';
+insert into public.ingredients (code, food_group_id, nutrition_basis)
+select 'zz_unit_removed', id, 'per_100g' from public.food_groups where code = 'cereales';
 insert into public.ingredient_allowed_units (ingredient_id, unit_id, is_default)
 select i.id, u.id, u.code = 'g'
 from public.ingredients i, public.units u
 where i.code = 'zz_unit_removed' and u.code in ('g', 'tbsp');
-set constraints all immediate;
 delete from public.ingredient_allowed_units
 where ingredient_id = (select id from public.ingredients where code = 'zz_unit_removed')
   and unit_id = (select id from public.units where code = 'tbsp');
@@ -189,7 +200,7 @@ where i.code = 'zz_no_answer' and u.code in ('g', 'unit');
 
 select throws_ok(
   'set constraints all immediate',
-  null,
+  'P0001',
   null,
   'a count-based ingredient that does not say whether half of one is usable is refused'
 );
@@ -205,7 +216,7 @@ where i.code = 'zz_pointless_answer' and u.code = 'g';
 
 select throws_ok(
   'set constraints all immediate',
-  null,
+  'P0001',
   null,
   'answering divisibility for something nobody counts is refused'
 );
@@ -220,7 +231,6 @@ insert into public.ingredient_allowed_units (ingredient_id, unit_id, is_default)
 select i.id, u.id, true
 from public.ingredients i, public.units u
 where i.code = 'zz_count_added_later' and u.code = 'g';
-set constraints all immediate;
 insert into public.ingredient_allowed_units (ingredient_id, unit_id, is_default)
 select i.id, u.id, false
 from public.ingredients i, public.units u
@@ -228,7 +238,7 @@ where i.code = 'zz_count_added_later' and u.code = 'unit';
 
 select throws_ok(
   'set constraints all immediate',
-  null,
+  'P0001',
   null,
   'adding a count unit to an ingredient that never answered divisibility is refused'
 );

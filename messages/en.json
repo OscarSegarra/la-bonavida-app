@@ -136,6 +136,10 @@
     "tbsp": "tbsp",
     "tsp": "tsp"
   },
+  "nutrition": {
+    "per100g": "per 100 g",
+    "per100ml": "per 100 ml"
+  },
   "nutrients": {
     "energy_kj": "Energy (kJ)",
     "energy_kcal": "Energy (kcal)",
@@ -204,8 +208,6 @@
     "empty": "No ingredients in the catalog yet.",
     "count": "{count, plural, one {# ingredient} other {# ingredients}}",
     "nutrition": "Nutrition information",
-    "per100g": "per 100 g",
-    "per100ml": "per 100 ml",
     "noNutrition": "No nutrition data for this ingredient.",
     "allergensAndDiets": "Allergens and diets",
     "noTags": "No allergens or dietary tags.",

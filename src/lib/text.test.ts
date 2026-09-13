@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { foldForSearch, matchesSearch } from "./search";
+import { foldForSearch, matchesSearch } from "./text";
 
 describe("foldForSearch", () => {
   it("strips the accents that Spanish names actually use", () => {

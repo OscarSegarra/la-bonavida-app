@@ -1,8 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
-import type { NutrientCategory } from "../domain/nutrition";
+import type { NutrientCategory } from "@/lib/nutrition/nutrients";
 import { resolveTranslation } from "../domain/translations";
-import { matchesSearch } from "../domain/search";
+import { matchesSearch } from "@/lib/text";
 
 type Client = SupabaseClient<Database>;
 
@@ -45,7 +45,7 @@ function toName(
  * Lists the catalog, optionally filtered.
  *
  * One query, never N+1: translations are embedded rather than fetched per
- * ingredient. Search matching lives in `domain/search` - it runs against
+ * ingredient. Search matching lives in `lib/text` - it runs against
  * every language the ingredient has and against its code, accent- and
  * case-insensitively.
  *

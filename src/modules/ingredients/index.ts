@@ -18,12 +18,12 @@ export {
 } from "./data/ingredients";
 export type { IngredientSummary, IngredientDetail } from "./data/ingredients";
 
-export {
-  groupNutrientsByCategory,
-  formatNutrientAmount,
-  groupMonthsIntoRuns,
-} from "./domain/nutrition";
-export type { NutrientValue, NutrientGroup, NutrientCategory } from "./domain/nutrition";
+// Nutrient formatting and the NutritionTable used to be re-exported from
+// here. They are not this module's to publish: nutrients are shared
+// reference data like units and locales, so they live in src/lib/nutrition
+// and every module imports them directly. Same reasoning that removed
+// listUnits() from this connector during the Phase 2 review.
+export { groupMonthsIntoRuns } from "./domain/seasonality";
 
 export { resolveTranslation } from "./domain/translations";
 export type { Translation, ResolvedName } from "./domain/translations";
@@ -33,5 +33,4 @@ export type { UnitInfo, Dimension, Bridges } from "./domain/units";
 
 export { IngredientList } from "./ui/IngredientList";
 export { IngredientFilters } from "./ui/IngredientFilters";
-export { NutritionTable } from "./ui/NutritionTable";
 export { IngredientFacts } from "./ui/IngredientFacts";

@@ -16,7 +16,7 @@
 create extension if not exists pgtap;
 
 begin;
-select plan(22);
+select plan(23);
 
 -- ---------------------------------------------------------------------
 -- Fixtures

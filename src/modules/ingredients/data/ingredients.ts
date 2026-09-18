@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import type { NutrientCategory } from "@/lib/nutrition/nutrients";
-import { resolveTranslation } from "../domain/translations";
+import { resolveTranslation } from "@/lib/translations";
 import { matchesSearch } from "@/lib/text";
 
 type Client = SupabaseClient<Database>;
@@ -31,14 +31,18 @@ export type IngredientDetail = IngredientSummary & {
   seasonality: Array<{ regionCode: string; months: number[] }>;
 };
 
-/** Adapts the domain fallback rule to this module's row shape. */
+/** Adapts the shared fallback rule to this module's row shape. */
 function toName(
   translations: Array<{ locale: string; name: string }>,
   locale: string,
   defaultLocale: string,
 ): { name: string; isFallbackName: boolean } {
-  const { name, isFallback } = resolveTranslation(translations, locale, defaultLocale);
-  return { name, isFallbackName: isFallback };
+  const { value, isFallback } = resolveTranslation(
+    translations.map((t) => ({ locale: t.locale, value: t.name })),
+    locale,
+    defaultLocale,
+  );
+  return { name: value, isFallbackName: isFallback };
 }
 
 /**

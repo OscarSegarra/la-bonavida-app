@@ -650,8 +650,35 @@ the second thing anyone tries, and `recipe_lines` already holds the
 answer — it is a join, not new schema. Name matching reuses the shared
 accent-folding helper.
 
-**Filtering is by tag, allergen and diet**, which is why the derived facts
-(§4.3) cannot wait for 3b.
+**Filtering is by tag.** Allergen and diet were meant to be filters here
+too, and are not yet — see below.
+
+**Deferred, with the reason stated because it is a promise not kept.**
+Filtering a *list* by allergen or diet needs the derived facts set-based,
+which means a view:
+
+```sql
+create view public.recipe_dietary_facts_view
+with (security_invoker = true) as
+select r.id as recipe_id, f.tag_id, f.code, f.category
+from public.recipes r
+cross join lateral public.recipe_dietary_facts(r.id) f;
+```
+
+`security_invoker = true` is not optional there: a view defaults to its
+*owner's* rights, so without it the view would read straight past RLS.
+
+The alternatives were worse. Calling the function once per recipe is an
+N+1. Recomputing the facts in TypeScript from the already-fetched lines
+would mean **two implementations of "is this vegan"** that can disagree —
+and this is the safety-relevant one, so a missing filter is better than a
+second answer. So the view is the right shape, and it waits for a session
+that can apply a migration to preprod.
+
+**What is not deferred:** a recipe's allergens and diets are shown on its
+own page, derived by the database. The safety property — you can see what
+is in a dish before you cook it — holds; what is missing is the
+convenience of narrowing the list by it.
 
 **On a recipe page:**
 
@@ -817,7 +844,10 @@ Each step is a PR, in this order, mirroring how Phase 2 was sliced:
 
 1. **Shared-code moves** (§6) — `src/lib/text.ts` and `src/lib/nutrition/`
    out of the ingredients module. Pure relocation, no behaviour change,
-   and it lands before anything depends on it.
+   and it lands before anything depends on it. A third followed in step 8
+   when the recipes data layer needed it: `src/lib/translations.ts`, the
+   locale fallback rule, which is no more the ingredients module's
+   property than text folding was.
 2. **Ingredient convertibility** (§2.6) — a Phase 2 table change. Cheap
    against 62 ingredients and steadily less cheap after, which is why it
    is here and not in 3b with the roll-up it serves.

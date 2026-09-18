@@ -2354,3 +2354,46 @@ rule, no "of 1,5" caveat in the UI, and no case where a scaled recipe's
 quantities disagree with its nutrition. The earlier `count_divisible`
 proposal existed to *round better*; this one uses the same single column
 to make rounding unnecessary.
+
+---
+
+## 2026-09-13 — `USAGE` on the private schema, rather than `security definer` on each helper
+
+**Context:** found applying Phase 3 to preprod. The first real seed run
+failed on the very first ingredient with `permission denied for schema
+private`.
+
+**Why it had never happened before,** which is the interesting part.
+Nobody held `USAGE` on `private` — not even `authenticated`. Phase 1's
+`private.household_role()` has worked all along regardless, because it is
+only ever called from inside an **RLS policy expression**, and Postgres
+evaluates those with the *table owner's* privileges rather than the
+querying user's. Phase 3 is the first code to call a private helper from
+anywhere else, and it does so from two places: a constraint-trigger body,
+which runs as whoever performed the write, and `public.recipe_dietary_facts`,
+which runs as its caller.
+
+**Decision:** `grant usage on schema private to authenticated,
+service_role`.
+
+**The alternative, and why it lost:** marking each helper `security
+definer`. That would have fixed the trigger case and been **actively wrong
+for the second** — `recipe_dietary_facts` must read through ordinary RLS so
+it derives facts only from rows the caller can already see, and a definer
+function reads everything. It would also add a standing
+privilege-escalation surface per helper, to solve what is really a
+question of schema visibility.
+
+**Why the grant is safe:** `USAGE` on a schema is not access to anything
+inside it. Every function still enforces its own `EXECUTE` grant, and every
+query inside these helpers still goes through RLS. It also exposes nothing
+over the API, because PostgREST serves only the schemas it is configured
+with and `private` is deliberately not one of them — so the schema's whole
+purpose, "not reachable over the API", is unchanged. `anon` is left out; it
+cannot read recipes or ingredients at all.
+
+**The lesson worth keeping: CI could not have caught this.** pgTAP runs as
+the superuser, which can reach everything, so every test passed while the
+real thing was broken for every non-superuser role. The first environment
+that exercised a realistic role was preprod. Worth remembering the next
+time a green suite feels like proof.

@@ -232,10 +232,31 @@ The bullets below stay the roadmap-level summary.
 
 ## Phase 3 — Recipes
 
-**Requirements settled 2026-09-12; not yet built. Detailed build spec:
-`PHASE_3_PLAN.md`.** This is deliberately *not* the Phase 3 earlier drafts
-of this file described — recipes are no longer household-written. The full
-reasoning is in `DECISIONS.md`, in the entries dated 2026-09-12.
+**Status: built**, merged to `develop` across nine PRs (#18 shared-code
+moves, #19 ingredient convertibility, #20 recipe schema, #21 invariants,
+#22 the write path, #23 derived facts, #24 the seed pipeline, #25 domain
+logic, #26 a private-schema grant found on deployment), plus the UI.
+Migrations applied to preprod in the required create → seed → alter order;
+62 ingredients and 8 recipes seeded; typecheck, lint, 149 unit tests, the
+pgTAP suites and the production build all pass.
+
+Two gaps, flagged rather than quietly assumed fine:
+
+- **Filtering the list by allergen or diet is not built.** It needs the
+  derived facts set-based, which means a view — and the alternative,
+  recomputing them in TypeScript, would have meant two implementations of
+  "is this vegan" that could disagree. A recipe's own page shows its
+  allergens and diets, so the safety property holds; what is missing is
+  narrowing the list by them. See `PHASE_3_PLAN.md` §6.2.
+- **Browser verification with a signed-in user is still outstanding** —
+  the same magic-link gap Phases 1 and 2 recorded. The queries themselves
+  were verified against preprod directly, including the sub-recipe embed
+  and the derived-facts RPC.
+
+**Detailed build spec: `PHASE_3_PLAN.md`.** This is deliberately *not* the
+Phase 3 earlier drafts of this file described — recipes are no longer
+household-written. The full reasoning is in `DECISIONS.md`, in the entries
+dated 2026-09-12 and 2026-09-13.
 
 - **Recipes are a global, admin-curated catalog**, like the Phase 2
   ingredient catalog: every authenticated user reads every recipe, no user

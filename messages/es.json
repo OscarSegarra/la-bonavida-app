@@ -199,6 +199,37 @@
     "11": "noviembre",
     "12": "diciembre"
   },
+  "recipeTags": {
+    "desayuno": "Desayuno",
+    "comida": "Comida",
+    "cena": "Cena",
+    "postre": "Postre",
+    "guarnicion": "Guarnición",
+    "rapido": "Rápido",
+    "una_olla": "Una sola olla",
+    "horno": "Al horno"
+  },
+  "Recipes": {
+    "title": "Recetas",
+    "curatedNote": "Por ahora las recetas están curadas — todavía no puedes añadir las tuyas.",
+    "searchLabel": "Buscar",
+    "searchPlaceholder": "Por nombre o ingrediente…",
+    "tag": "Etiqueta",
+    "allTags": "Todas las etiquetas",
+    "showBasics": "Mostrar ingredientes sueltos",
+    "count": "{count, plural, one {# receta} other {# recetas}}",
+    "noResults": "Ninguna receta coincide.",
+    "empty": "Todavía no hay recetas en el catálogo.",
+    "backToList": "← Todas las recetas",
+    "ingredients": "Ingredientes",
+    "servings": "Raciones",
+    "isARecipe": "(receta)",
+    "steps": "Pasos",
+    "resetSteps": "Empezar de nuevo",
+    "allergens": "Alérgenos",
+    "noAllergens": "ninguno",
+    "suitableFor": "Apto para"
+  },
   "Ingredients": {
     "title": "Ingredientes",
     "searchLabel": "Buscar ingredientes",

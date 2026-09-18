@@ -199,6 +199,37 @@
     "11": "novembre",
     "12": "desembre"
   },
+  "recipeTags": {
+    "desayuno": "Esmorzar",
+    "comida": "Dinar",
+    "cena": "Sopar",
+    "postre": "Postres",
+    "guarnicion": "Guarnició",
+    "rapido": "Ràpid",
+    "una_olla": "Una sola olla",
+    "horno": "Al forn"
+  },
+  "Recipes": {
+    "title": "Receptes",
+    "curatedNote": "De moment les receptes estan curades — encara no en pots afegir de teves.",
+    "searchLabel": "Cerca",
+    "searchPlaceholder": "Per nom o ingredient…",
+    "tag": "Etiqueta",
+    "allTags": "Totes les etiquetes",
+    "showBasics": "Mostra ingredients solts",
+    "count": "{count, plural, one {# recepta} other {# receptes}}",
+    "noResults": "Cap recepta coincideix.",
+    "empty": "Encara no hi ha receptes al catàleg.",
+    "backToList": "← Totes les receptes",
+    "ingredients": "Ingredients",
+    "servings": "Racions",
+    "isARecipe": "(recepta)",
+    "steps": "Passos",
+    "resetSteps": "Comença de nou",
+    "allergens": "Al·lèrgens",
+    "noAllergens": "cap",
+    "suitableFor": "Apte per a"
+  },
   "Ingredients": {
     "title": "Ingredients",
     "searchLabel": "Cerca ingredients",

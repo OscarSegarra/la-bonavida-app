@@ -199,6 +199,37 @@
     "11": "November",
     "12": "December"
   },
+  "recipeTags": {
+    "desayuno": "Breakfast",
+    "comida": "Lunch",
+    "cena": "Dinner",
+    "postre": "Dessert",
+    "guarnicion": "Side dish",
+    "rapido": "Quick",
+    "una_olla": "One pot",
+    "horno": "Oven"
+  },
+  "Recipes": {
+    "title": "Recipes",
+    "curatedNote": "Recipes are curated for now — you cannot add your own yet.",
+    "searchLabel": "Search",
+    "searchPlaceholder": "By name or ingredient…",
+    "tag": "Tag",
+    "allTags": "All tags",
+    "showBasics": "Show single ingredients",
+    "count": "{count, plural, one {# recipe} other {# recipes}}",
+    "noResults": "No recipes match.",
+    "empty": "No recipes in the catalog yet.",
+    "backToList": "← All recipes",
+    "ingredients": "Ingredients",
+    "servings": "Servings",
+    "isARecipe": "(recipe)",
+    "steps": "Steps",
+    "resetSteps": "Start over",
+    "allergens": "Allergens",
+    "noAllergens": "none",
+    "suitableFor": "Suitable for"
+  },
   "Ingredients": {
     "title": "Ingredients",
     "searchLabel": "Search ingredients",

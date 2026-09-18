@@ -25,8 +25,6 @@ export type { IngredientSummary, IngredientDetail } from "./data/ingredients";
 // listUnits() from this connector during the Phase 2 review.
 export { groupMonthsIntoRuns } from "./domain/seasonality";
 
-export { resolveTranslation } from "./domain/translations";
-export type { Translation, ResolvedName } from "./domain/translations";
 
 export { convertQuantity } from "./domain/units";
 export type { UnitInfo, Dimension, Bridges } from "./domain/units";

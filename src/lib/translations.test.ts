@@ -2,23 +2,23 @@ import { describe, it, expect } from "vitest";
 import { resolveTranslation } from "./translations";
 
 const all = [
-  { locale: "es", name: "Leche entera" },
-  { locale: "ca", name: "Llet sencera" },
-  { locale: "en", name: "Whole milk" },
+  { locale: "es", value: "Leche entera" },
+  { locale: "ca", value: "Llet sencera" },
+  { locale: "en", value: "Whole milk" },
 ];
 
 describe("resolveTranslation", () => {
   it("uses the requested locale when it exists", () => {
     expect(resolveTranslation(all, "ca", "es")).toEqual({
-      name: "Llet sencera",
+      value: "Llet sencera",
       isFallback: false,
     });
   });
 
   it("falls back to the default locale and says so", () => {
-    const partial = [{ locale: "es", name: "Leche entera" }];
+    const partial = [{ locale: "es", value: "Leche entera" }];
     expect(resolveTranslation(partial, "en", "es")).toEqual({
-      name: "Leche entera",
+      value: "Leche entera",
       isFallback: true,
     });
   });
@@ -32,24 +32,24 @@ describe("resolveTranslation", () => {
   // "showing you Spanish because that is all there is".
   it("distinguishes a real translation from a fallback of the same text", () => {
     const sameText = [
-      { locale: "es", name: "Chocolate" },
-      { locale: "en", name: "Chocolate" },
+      { locale: "es", value: "Chocolate" },
+      { locale: "en", value: "Chocolate" },
     ];
     expect(resolveTranslation(sameText, "en", "es").isFallback).toBe(false);
     expect(resolveTranslation([sameText[0]], "en", "es").isFallback).toBe(true);
   });
 
   it("degrades to any available name rather than throwing", () => {
-    const onlyCatalan = [{ locale: "ca", name: "Llet" }];
+    const onlyCatalan = [{ locale: "ca", value: "Llet" }];
     expect(resolveTranslation(onlyCatalan, "en", "es")).toEqual({
-      name: "Llet",
+      value: "Llet",
       isFallback: true,
     });
   });
 
   it("degrades to a placeholder when there are no translations at all", () => {
     expect(resolveTranslation([], "en", "es")).toEqual({
-      name: "—",
+      value: "—",
       isFallback: true,
     });
   });

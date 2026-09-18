@@ -356,6 +356,7 @@ export type Database = {
       ingredients: {
         Row: {
           code: string
+          count_divisible: boolean | null
           created_at: string
           density_g_per_ml: number | null
           food_group_id: number
@@ -366,6 +367,7 @@ export type Database = {
         }
         Insert: {
           code: string
+          count_divisible?: boolean | null
           created_at?: string
           density_g_per_ml?: number | null
           food_group_id: number
@@ -376,6 +378,7 @@ export type Database = {
         }
         Update: {
           code?: string
+          count_divisible?: boolean | null
           created_at?: string
           density_g_per_ml?: number | null
           food_group_id?: number
@@ -457,6 +460,325 @@ export type Database = {
         }
         Relationships: []
       }
+      recipe_lines: {
+        Row: {
+          id: number
+          ingredient_id: number | null
+          position: number
+          quantity: number
+          recipe_id: number
+          sub_recipe_id: number | null
+          unit_id: number
+        }
+        Insert: {
+          id?: never
+          ingredient_id?: number | null
+          position: number
+          quantity: number
+          recipe_id: number
+          sub_recipe_id?: number | null
+          unit_id: number
+        }
+        Update: {
+          id?: never
+          ingredient_id?: number | null
+          position?: number
+          quantity?: number
+          recipe_id?: number
+          sub_recipe_id?: number | null
+          unit_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_lines_ingredient_id_fkey"
+            columns: ["ingredient_id"]
+            isOneToOne: false
+            referencedRelation: "ingredients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_lines_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_lines_sub_recipe_id_fkey"
+            columns: ["sub_recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_lines_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_nutrient_overrides: {
+        Row: {
+          nutrient_id: number
+          recipe_id: number
+          value: number
+        }
+        Insert: {
+          nutrient_id: number
+          recipe_id: number
+          value: number
+        }
+        Update: {
+          nutrient_id?: number
+          recipe_id?: number
+          value?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_nutrient_overrides_nutrient_id_fkey"
+            columns: ["nutrient_id"]
+            isOneToOne: false
+            referencedRelation: "nutrients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_nutrient_overrides_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_step_translations: {
+        Row: {
+          body: string
+          locale: string
+          step_id: number
+        }
+        Insert: {
+          body: string
+          locale: string
+          step_id: number
+        }
+        Update: {
+          body?: string
+          locale?: string
+          step_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_step_translations_locale_fkey"
+            columns: ["locale"]
+            isOneToOne: false
+            referencedRelation: "locales"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "recipe_step_translations_step_id_fkey"
+            columns: ["step_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_steps"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_steps: {
+        Row: {
+          id: number
+          position: number
+          recipe_id: number
+        }
+        Insert: {
+          id?: never
+          position: number
+          recipe_id: number
+        }
+        Update: {
+          id?: never
+          position?: number
+          recipe_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_steps_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_tag_assignments: {
+        Row: {
+          recipe_id: number
+          tag_id: number
+        }
+        Insert: {
+          recipe_id: number
+          tag_id: number
+        }
+        Update: {
+          recipe_id?: number
+          tag_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_tag_assignments_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipe_tag_assignments_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_tag_translations: {
+        Row: {
+          locale: string
+          name: string
+          tag_id: number
+        }
+        Insert: {
+          locale: string
+          name: string
+          tag_id: number
+        }
+        Update: {
+          locale?: string
+          name?: string
+          tag_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_tag_translations_locale_fkey"
+            columns: ["locale"]
+            isOneToOne: false
+            referencedRelation: "locales"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "recipe_tag_translations_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "recipe_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipe_tags: {
+        Row: {
+          code: string
+          id: number
+        }
+        Insert: {
+          code: string
+          id?: never
+        }
+        Update: {
+          code?: string
+          id?: never
+        }
+        Relationships: []
+      }
+      recipe_translations: {
+        Row: {
+          description: string | null
+          locale: string
+          recipe_id: number
+          title: string
+        }
+        Insert: {
+          description?: string | null
+          locale: string
+          recipe_id: number
+          title: string
+        }
+        Update: {
+          description?: string | null
+          locale?: string
+          recipe_id?: number
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipe_translations_locale_fkey"
+            columns: ["locale"]
+            isOneToOne: false
+            referencedRelation: "locales"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "recipe_translations_recipe_id_fkey"
+            columns: ["recipe_id"]
+            isOneToOne: false
+            referencedRelation: "recipes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      recipes: {
+        Row: {
+          code: string
+          created_at: string
+          id: number
+          min_servings: number
+          owner_user_id: string | null
+          retired_at: string | null
+          servings: number
+          visibility: string
+          yield_quantity: number
+          yield_unit_id: number
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          id?: never
+          min_servings?: number
+          owner_user_id?: string | null
+          retired_at?: string | null
+          servings: number
+          visibility?: string
+          yield_quantity: number
+          yield_unit_id: number
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          id?: never
+          min_servings?: number
+          owner_user_id?: string | null
+          retired_at?: string | null
+          servings?: number
+          visibility?: string
+          yield_quantity?: number
+          yield_unit_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "recipes_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "recipes_yield_unit_id_fkey"
+            columns: ["yield_unit_id"]
+            isOneToOne: false
+            referencedRelation: "units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       regions: {
         Row: {
           code: string
@@ -511,11 +833,24 @@ export type Database = {
           role: string
         }[]
       }
+      recipe_dietary_facts: {
+        Args: { p_recipe_id: number }
+        Returns: {
+          category: string
+          code: string
+          tag_id: number
+        }[]
+      }
       set_ingredient_retired: {
         Args: { _code: string; _retired: boolean }
         Returns: number
       }
+      set_recipe_retired: {
+        Args: { _code: string; _retired: boolean }
+        Returns: number
+      }
       upsert_ingredient: { Args: { payload: Json }; Returns: number }
+      upsert_recipe: { Args: { payload: Json }; Returns: number }
     }
     Enums: {
       [_ in never]: never
